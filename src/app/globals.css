@@ -1,42 +1,191 @@
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-@media (prefers-color-scheme: dark) {
+@layer base {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    /* PRD Colors converted to HSL for Shadcn */
+    /* Primary: #4A90E2 (Blue) */
+    --primary: 212 72% 59%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Secondary: #7ED321 (Green) */
+    --secondary: 82 72% 48%;
+    --secondary-foreground: 0 0% 100%;
+
+    /* Accent: #F5A623 (Orange) */
+    --accent: 37 91% 55%;
+    --accent-foreground: 0 0% 100%;
+
+    /* Background: #F8F9FA */
+    --background: 210 17% 98%;
+    --foreground: 222 47% 11%;
+    /* #1A1A1A approx */
+
+    /* Cards (White) */
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    /* Popovers */
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    /* Muted */
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    /* #666666 approx */
+
+    /* Destructive */
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    /* Border/Input */
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 212 72% 59%;
+    /* Primary match */
+
+    /* Radius */
+    --radius: 0.5rem;
+
+    /* Charts */
+    --chart-1: 212 72% 59%;
+    --chart-2: 82 72% 48%;
+    --chart-3: 37 91% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 212 72% 59%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 82 72% 48%;
+    --secondary-foreground: 0 0% 100%;
+    --accent: 37 91% 55%;
+    --accent-foreground: 0 0% 100%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
+    --chart-1: 212 72% 59%;
+    --chart-2: 82 72% 48%;
+    --chart-3: 37 91% 55%;
+  }
+
+  /* Pixel Theme Overrides - Beige Retro */
+  .pixel {
+    /* Main Palette based on the image */
+    --background: 37 38% 92%;
+    /* Beige background #EFEFE4 approx */
+    --foreground: 25 25% 30%;
+    /* Dark Brown text #604D42 approx */
+
+    --card: 37 30% 88%;
+    /* Slightly darker beige card */
+    --card-foreground: 25 25% 30%;
+
+    --primary: 34 25% 78%;
+    /* Button main color (Light brown/beige) */
+    --primary-foreground: 25 25% 30%;
+
+    --secondary: 34 20% 70%;
+    --secondary-foreground: 25 25% 30%;
+
+    --muted: 37 20% 85%;
+    --muted-foreground: 25 30% 50%;
+
+    /* Hard borders */
+    --border: 25 25% 30%;
+    /* Dark Brown Border */
+    --input: 37 30% 88%;
+    --ring: 25 25% 30%;
+
+    /* Radius removed */
+    --radius: 0px;
   }
 }
 
-html,
-body {
-  max-width: 100vw;
-  overflow-x: hidden;
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+
+  /* Pixel Theme Specific Styles */
+  .pixel body,
+  .pixel {
+    font-family: var(--font-press-start), var(--font-neodgm), monospace;
+  }
+
+  /* Pixel Card Style */
+  .pixel .card,
+  .pixel [class*="card"] {
+    border-width: 4px !important;
+    border-color: #604D42 !important;
+    /* Dark Brown */
+    border-radius: 8px !important;
+    /* Slight rounded corners but pixelated feel */
+    background-color: #E6DBCF !important;
+    /* Panel color */
+    box-shadow: 0 4px 0 0 rgba(70, 50, 40, 0.4) !important;
+  }
+
+  /* Pixel Button Style - 3D Effect */
+  .pixel button,
+  .pixel [role="button"] {
+    border-width: 3px !important;
+    border-color: #604D42 !important;
+    border-radius: 4px !important;
+    background-color: #D6C2B0 !important;
+    /* Button Face */
+    color: #4A3B32 !important;
+    box-shadow: 0 6px 0 0 #A69280, 0 6px 0 3px #604D42 !important;
+    /* Deep shadow + Border extension */
+    transition: all 0.1s !important;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+    /* Space for shadow */
+  }
+
+  .pixel button:active {
+    transform: translateY(4px) !important;
+    box-shadow: 0 2px 0 0 #A69280, 0 2px 0 3px #604D42 !important;
+  }
+
+  /* Specific override for Theme Toggle icon button to fit standard shapes */
+  .pixel .fixed button {
+    border-radius: 0 !important;
+  }
+
+  /* Input fields */
+  .pixel input,
+  .pixel textarea {
+    border-width: 3px !important;
+    border-color: #604D42 !important;
+    background-color: #F5EFEB !important;
+    box-shadow: inset 2px 2px 0 0 rgba(0, 0, 0, 0.1) !important;
+    border-radius: 0 !important;
+  }
 }
 
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
 
-* {
-  box-sizing: border-box;
-  padding: 0;
-  margin: 0;
-}
-
-a {
-  color: inherit;
-  text-decoration: none;
-}
-
-@media (prefers-color-scheme: dark) {
-  html {
-    color-scheme: dark;
+  button {
+    touch-action: manipulation;
   }
 }
