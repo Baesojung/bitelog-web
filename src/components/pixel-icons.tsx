@@ -83,3 +83,11 @@ export const PixelGhost = forwardRef<SVGSVGElement, PixelIconProps>((props, ref)
     </PixelIcon>
 ));
 PixelGhost.displayName = 'PixelGhost';
+
+// Icon: plus
+export const PixelPlus = forwardRef<SVGSVGElement, PixelIconProps>((props, ref) => (
+    <PixelIcon ref={ref} {...props}>
+        <path d="M13 11V4h-2v7H4v2h7v7h2v-7h7v-2h-7z" />
+    </PixelIcon>
+));
+PixelPlus.displayName = 'PixelPlus';
