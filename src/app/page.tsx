@@ -1,20 +1,14 @@
 "use client";
 
 import { useTheme } from "next-themes";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Calendar } from "@/components/ui/calendar";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Utensils, Plus, Calendar as CalendarIcon, ChevronLeft, ChevronRight, Flame, Trash2, Copy, MoreHorizontal } from "lucide-react";
 import Link from "next/link";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { useState, useEffect, useMemo } from "react";
-import { PixelMeal, PixelPlus } from "@/components/pixel-icons";
-import { format, addDays, subDays, startOfWeek, endOfWeek, startOfMonth, endOfMonth, isSameDay, isSameMonth, subMonths, addMonths, subWeeks, addWeeks, parseISO } from "date-fns";
+import { format, addDays, subDays, isSameDay, parseISO, startOfMonth, endOfMonth, getDay, addMonths, subMonths } from "date-fns";
 import { ko } from "date-fns/locale";
-import { Bar, BarChart, CartesianGrid, XAxis, Tooltip, ResponsiveContainer, Cell, YAxis } from "recharts";
-import { PixelPetDisplay } from "@/components/pixel-pet-display";
+import { Search, BookOpen, ChevronLeft, ChevronRight, Plus, BarChart3 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
+// Types
 type FoodItem = {
   name: string;
   qty: string;
@@ -23,6 +17,7 @@ type FoodItem = {
     carbs: number;
     protein: number;
     fat: number;
+    // ...
   };
 };
 
@@ -43,30 +38,18 @@ type MealLog = {
   created_at: string;
 };
 
-
-
-type ViewMode = 'day' | 'week' | 'month';
-
 export default function Home() {
-  const { theme } = useTheme();
-  const [mounted, setMounted] = useState(false);
   const [meals, setMeals] = useState<MealLog[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [viewMode, setViewMode] = useState<ViewMode>('day');
-  const [showCalendar, setShowCalendar] = useState(false);
 
-  // Helper State for Actions
+  // Helper State
   const [mealToDelete, setMealToDelete] = useState<number | null>(null);
   const [mealToDuplicate, setMealToDuplicate] = useState<MealLog | null>(null);
-  const [duplicateDate, setDuplicateDate] = useState<Date>(new Date());
-
-  // Details Modal State
   const [selectedMeal, setSelectedMeal] = useState<MealLog | null>(null);
 
   useEffect(() => {
-    setMounted(true);
     fetchMeals();
   }, []);
 
@@ -83,487 +66,446 @@ export default function Home() {
     }
   };
 
+  const filteredData = useMemo(() => {
+    if (!meals.length) return { list: [], totalKcal: 0, totalCarbs: 0, totalProtein: 0, totalFat: 0 };
+    const list = meals.filter(m => isSameDay(parseISO(m.eaten_at), currentDate));
+    const totalKcal = list.reduce((acc, curr) => acc + (curr.total_kcal || 0), 0);
+    const totalCarbs = list.reduce((acc, curr) => acc + (curr.macros?.carbs || 0), 0);
+    const totalProtein = list.reduce((acc, curr) => acc + (curr.macros?.protein || 0), 0);
+    const totalFat = list.reduce((acc, curr) => acc + (curr.macros?.fat || 0), 0);
+    return { list, totalKcal, totalCarbs, totalProtein, totalFat };
+  }, [meals, currentDate]);
+
+  const handlePrev = () => setCurrentDate(prev => subDays(prev, 1));
+  const handleNext = () => setCurrentDate(prev => addDays(prev, 1));
+
   const handleDeleteMeal = async () => {
     if (!mealToDelete) return;
     try {
-      const response = await fetch(`http://localhost:8000/v1/meals/${mealToDelete}`, {
-        method: 'DELETE',
-      });
-      if (!response.ok) throw new Error('Failed to delete meal');
-
+      await fetch(`http://localhost:8000/v1/meals/${mealToDelete}`, { method: 'DELETE' });
       setMeals(prev => prev.filter(m => m.id !== mealToDelete));
       setMealToDelete(null);
-    } catch (error) {
-      console.error(error);
-      alert("삭제 중 오류가 발생했습니다.");
+    } catch (e) {
+      console.error(e);
     }
   };
 
-  const handleDuplicateMeal = async () => {
+  // Handle Initial Click on Copy
+  const openDuplicateModal = (meal: MealLog) => {
+    setMealToDuplicate(meal);
+  };
+
+  const confirmDuplicate = async (targetDateStr: string) => {
     if (!mealToDuplicate) return;
+
     try {
-      const response = await fetch(`http://localhost:8000/v1/meals/${mealToDuplicate.id}/duplicate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      // Create new date object from selected date string (YYYY-MM-DD)
+      // and use current time for the time part, or keep original time?
+      // Usually "I ate this now" -> Current Time.
+      // But if user picks a date, maybe they mean "I ate this at that date's lunch/dinner time"?
+      // Simplest: Use selected date + Current Time components
+      const targetDate = new Date(targetDateStr);
+      const now = new Date();
+      targetDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds());
+
+      const newMeal = {
+        ...mealToDuplicate,
+        eaten_at: targetDate.toISOString(),
+      };
+
+      // Remove ID and created_at
+      // @ts-ignore
+      delete newMeal.id;
+      // @ts-ignore
+      delete newMeal.created_at;
+
+      const res = await fetch("http://localhost:8000/v1/meals/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          new_eaten_at: duplicateDate.toISOString()
-        })
+          user_id: 1,
+          raw_text: newMeal.raw_text,
+          meal_type: newMeal.meal_type,
+          eaten_at: newMeal.eaten_at,
+          total_kcal: newMeal.total_kcal,
+          macros: newMeal.macros,
+          ai_summary: newMeal.ai_summary,
+          items: (newMeal.items_json || []).map(item => ({
+            name: item.name,
+            qty: item.qty,
+            kcal: item.kcal,
+            macros: item.macros
+          }))
+        }),
       });
-      if (!response.ok) throw new Error('Failed to duplicate meal');
 
-      const newMeal = await response.json();
-      setMeals(prev => [newMeal, ...prev]);
-      setMealToDuplicate(null);
-      alert("기록이 복제되었습니다.");
+      if (!res.ok) throw new Error("Failed to duplicate meal");
+
+      fetchMeals(); // Refresh
+      setMealToDuplicate(null); // Close modal
+
     } catch (error) {
-      console.error(error);
-      alert("복제 중 오류가 발생했습니다.");
+      console.error("Duplicate failed", error);
     }
-  };
-
-  // --- Data Processing ---
-
-  const filteredData = useMemo(() => {
-    if (!meals.length) return { list: [], totalKcal: 0, chartData: [] };
-
-    let list: MealLog[] | any[] = [];
-    let totalKcal = 0;
-    let chartData: any[] = [];
-
-    if (viewMode === 'day') {
-      list = meals.filter(m => isSameDay(parseISO(m.eaten_at), currentDate));
-      totalKcal = list.reduce((acc, curr) => acc + (curr.total_kcal || 0), 0);
-
-      // Chart: Calories by Meal Type
-      const typeData = { breakfast: 0, lunch: 0, dinner: 0, snack: 0 };
-      list.forEach(m => {
-        const type = m.meal_type?.toLowerCase() || 'snack';
-        if (typeData[type as keyof typeof typeData] !== undefined) {
-          typeData[type as keyof typeof typeData] += m.total_kcal || 0;
-        }
-      });
-      chartData = [
-        { name: '아침', kcal: typeData.breakfast },
-        { name: '점심', kcal: typeData.lunch },
-        { name: '저녁', kcal: typeData.dinner },
-        { name: '간식', kcal: typeData.snack },
-      ];
-    }
-    else if (viewMode === 'week') {
-      const start = startOfWeek(currentDate, { weekStartsOn: 1 }); // Monday start
-      const end = endOfWeek(currentDate, { weekStartsOn: 1 });
-
-      const weekMeals = meals.filter(m => {
-        const d = parseISO(m.eaten_at);
-        return d >= start && d <= end;
-      });
-
-      // Group by day
-      const days = [];
-      for (let i = 0; i < 7; i++) {
-        const d = addDays(start, i);
-        const dailyMeals = weekMeals.filter(m => isSameDay(parseISO(m.eaten_at), d));
-        const dailyKcal = dailyMeals.reduce((acc, curr) => acc + (curr.total_kcal || 0), 0);
-        days.push({
-          date: d,
-          name: format(d, 'EEE', { locale: ko }),
-          kcal: dailyKcal,
-          meals: dailyMeals
-        });
-        totalKcal += dailyKcal;
-      }
-      chartData = days;
-      list = days.slice().reverse(); // Show recent days first
-    }
-    else if (viewMode === 'month') {
-      const start = startOfMonth(currentDate);
-      const end = endOfMonth(currentDate);
-
-      const monthMeals = meals.filter(m => {
-        const d = parseISO(m.eaten_at);
-        return d >= start && d <= end;
-      });
-
-      // Group by day (simplified for chart)
-      const daysInMonth = end.getDate();
-      const days = [];
-      for (let i = 1; i <= daysInMonth; i++) {
-        // Construct date correctly handling month rollover if needed, generally start + i-1 days
-        const d = new Date(start.getFullYear(), start.getMonth(), i);
-        const dailyMeals = monthMeals.filter(m => isSameDay(parseISO(m.eaten_at), d));
-        const dailyKcal = dailyMeals.reduce((acc, curr) => acc + (curr.total_kcal || 0), 0);
-        days.push({
-          name: i.toString(),
-          kcal: dailyKcal,
-          date: d,
-          meals: dailyMeals
-        });
-        totalKcal += dailyKcal;
-      }
-      chartData = days;
-      // Filter out days with 0 kcal for the list view to avoid clutter
-      list = days.filter(d => d.kcal > 0).reverse();
-    }
-
-    return { list, totalKcal, chartData };
-  }, [meals, currentDate, viewMode]);
-
-  // --- Handlers ---
-
-  const handlePrev = () => {
-    if (viewMode === 'day') setCurrentDate(prev => subDays(prev, 1));
-    if (viewMode === 'week') setCurrentDate(prev => subWeeks(prev, 1));
-    if (viewMode === 'month') setCurrentDate(prev => subMonths(prev, 1));
-  };
-
-  const handleNext = () => {
-    if (viewMode === 'day') setCurrentDate(prev => addDays(prev, 1));
-    if (viewMode === 'week') setCurrentDate(prev => addWeeks(prev, 1));
-    if (viewMode === 'month') setCurrentDate(prev => addMonths(prev, 1));
-  };
-
-  const isPixel = mounted && theme === 'pixel';
-
-  // --- Render Helpers ---
-
-  const renderDateTitle = () => {
-    if (viewMode === 'day') return format(currentDate, 'yyyy년 M월 d일 (EEE)', { locale: ko });
-    if (viewMode === 'week') {
-      const start = startOfWeek(currentDate, { weekStartsOn: 1 });
-      const end = endOfWeek(currentDate, { weekStartsOn: 1 });
-      return `${format(start, 'M월 d일')} - ${format(end, 'M월 d일')}`;
-    }
-    if (viewMode === 'month') return format(currentDate, 'yyyy년 M월', { locale: ko });
   };
 
   return (
-    <main className="min-h-screen flex flex-col items-center p-4 pb-24 bg-gradient-to-br from-background to-blue-50/50 pixel:bg-none pixel:bg-background transition-colors duration-300 relative text-foreground">
+    <main className="min-h-screen bg-[#e0e0e0] py-8 px-4 flex justify-center items-start font-mono">
 
-      {/* Header & Controls */}
-      <div className="w-full max-w-md sticky top-0 z-20 bg-background/80 backdrop-blur-md rounded-b-xl pixel:bg-background pixel:border-b-2 pixel:border-border pixel:rounded-none px-2 pb-2">
-        <div className="flex justify-between items-center py-3">
-          <h1 className="text-xl font-bold tracking-tight pixel:text-lg">Dashboard</h1>
-          <ThemeToggle />
-        </div>
+      {/* Receipt Container */}
+      <div className="w-full max-w-md bg-white receipt-shadow relative pb-2">
+        <div className="receipt-zigzag-top" />
 
-        {/* View Toggles */}
-        <div className="flex bg-muted/50 p-1 rounded-lg mb-4 pixel:rounded-none pixel:border pixel:border-border">
-          {(['day', 'week', 'month'] as ViewMode[]).map((mode) => (
-            <button
-              key={mode}
-              onClick={() => setViewMode(mode)}
-              className={`flex-1 py-1 text-sm font-medium rounded-md transition-all ${viewMode === mode ? 'bg-background shadow-sm text-primary pixel:bg-primary pixel:text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-            >
-              {mode === 'day' ? '일간' : mode === 'week' ? '주간' : '월간'}
+        <div className="p-6 space-y-6">
+
+          {/* Receipt Header */}
+          <div className="text-center space-y-2">
+            <h1 className="text-4xl font-bold tracking-tighter uppercase text-black transform scale-y-110">
+              BITELOG
+            </h1>
+            <div className="flex flex-col text-[10px] font-bold text-black/60 uppercase tracking-widest border-b-2 border-dashed border-black/20 pb-4">
+              <span>Healthy Life Store</span>
+              <span>Order #{format(currentDate, 'yyMMdd')}</span>
+              <span>{format(currentDate, 'yyyy-MM-dd HH:mm')}</span>
+            </div>
+          </div>
+
+          {/* Date Navigator */}
+          <div className="flex justify-between items-center py-2 border-b-2 border-dashed border-black/20">
+            <button onClick={handlePrev} className="h-8 w-8 flex items-center justify-center hover:bg-black/5">
+              <ChevronLeft size={16} />
             </button>
-          ))}
-        </div>
-
-        {/* Date Navigator */}
-        <div className="flex justify-between items-center mb-2">
-          <Button variant="ghost" size="icon" onClick={handlePrev}>
-            <ChevronLeft className="h-5 w-5" />
-          </Button>
-
-          <div className="flex items-center gap-2 cursor-pointer" onClick={() => setShowCalendar(!showCalendar)}>
-            <span className="text-lg font-bold">{renderDateTitle()}</span>
-            <CalendarIcon className="h-4 w-4 text-muted-foreground" />
+            <div className="text-center uppercase">
+              <div className="text-[10px] font-bold text-black/50 tracking-widest">Date</div>
+              <div className="text-sm font-bold text-black">{format(currentDate, 'MM.dd EEE', { locale: ko })}</div>
+            </div>
+            <button onClick={handleNext} className="h-8 w-8 flex items-center justify-center hover:bg-black/5">
+              <ChevronRight size={16} />
+            </button>
           </div>
 
-          <Button variant="ghost" size="icon" onClick={handleNext}>
-            <ChevronRight className="h-5 w-5" />
-          </Button>
-        </div>
+          {/* Stamp Calendar (Loyalty Card) */}
+          <div className="border-2 border-gray-300 p-3 bg-white relative overflow-hidden rounded-sm">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gray-100" />
+            <div className="flex justify-between items-center mb-2 border-b border-gray-200 pb-1">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Loyalty Card</span>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setCurrentDate(subMonths(currentDate, 1))} className="hover:text-black text-gray-400">
+                  <ChevronLeft size={12} />
+                </button>
+                <span className="text-[10px] font-bold text-gray-400 min-w-[60px] text-center">{format(currentDate, 'MMMM', { locale: ko }).toUpperCase()}</span>
+                <button onClick={() => setCurrentDate(addMonths(currentDate, 1))} className="hover:text-black text-gray-400">
+                  <ChevronRight size={12} />
+                </button>
+              </div>
+            </div>
 
-        {/* Mini Calendar Dropdown */}
-        {showCalendar && (
-          <div className="absolute top-full left-0 right-0 p-4 bg-background border border-border mt-1 shadow-lg rounded-xl z-30 pixel:rounded-none pixel:border-2">
-            <Calendar
-              mode="single"
-              selected={currentDate}
-              onSelect={(d) => { if (d) { setCurrentDate(d); setShowCalendar(false); } }}
-              className="rounded-md border mx-auto w-fit"
-            />
+            <div className="grid grid-cols-7 gap-1 text-center mb-1">
+              {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
+                <div key={i} className="text-[8px] font-bold text-gray-300">{d}</div>
+              ))}
+            </div>
+            <div className="grid grid-cols-7 gap-1">
+              {(() => {
+                const monthStart = startOfMonth(currentDate);
+                const monthEnd = endOfMonth(currentDate);
+                const startDay = getDay(monthStart);
+                const daysInMonth = monthEnd.getDate();
+                const calendarDays = [];
+
+                // Empty slots for start padding
+                for (let i = 0; i < startDay; i++) {
+                  calendarDays.push(<div key={`empty-${i}`} className="aspect-square" />);
+                }
+
+                // Days
+                for (let i = 1; i <= daysInMonth; i++) {
+                  const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), i);
+
+                  // Calculate daily stats
+                  const dayMeals = meals.filter(m => isSameDay(parseISO(m.eaten_at), date));
+                  const hasLog = dayMeals.length > 0;
+                  const dayKcal = dayMeals.reduce((acc, curr) => acc + (curr.total_kcal || 0), 0);
+
+                  const isToday = isSameDay(date, new Date());
+                  const isSelected = isSameDay(date, currentDate);
+
+                  // Determine intensity
+                  let intensityClass = 'border-2 border-dashed border-gray-200 text-gray-300 group-hover:border-gray-400';
+                  if (hasLog) {
+                    // Base style for logged days
+                    const base = "text-white shadow-[inset_0_0_4px_rgba(0,0,0,0.2)] transition-all";
+                    if (dayKcal >= 2000) intensityClass = `bg-slate-900 ${base}`;
+                    else if (dayKcal >= 1200) intensityClass = `bg-slate-800/90 ${base}`;
+                    else if (dayKcal >= 600) intensityClass = `bg-slate-800/70 ${base}`;
+                    else intensityClass = `bg-slate-800/40 ${base}`;
+                  }
+
+                  calendarDays.push(
+                    <div
+                      key={i}
+                      onClick={() => setCurrentDate(date)}
+                      className={`
+                        aspect-square flex items-center justify-center relative cursor-pointer group rounded-full transition-colors
+                        ${isSelected ? 'bg-gray-100' : ''}
+                      `}
+                    >
+                      <div className={`
+                        w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold
+                        ${intensityClass}
+                      `}>
+                        {i}
+                      </div>
+                      {isToday && <div className="absolute -bottom-1 w-1 h-1 bg-red-400 rounded-full" />}
+                    </div>
+                  );
+                }
+                return calendarDays;
+              })()}
+            </div>
+            <div className="mt-2 text-[8px] text-center text-gray-300 uppercase tracking-widest">
+              Collect stamps daily!
+            </div>
+
+            {/* Stamp decoration */}
+            <div className="absolute -right-4 -bottom-4 w-12 h-12 border-4 border-gray-100 rounded-full" />
           </div>
-        )}
-      </div>
 
-      {/* Main Content */}
-      <div className="w-full max-w-md space-y-6 mt-4">
-
-        {/* Pixel Pet Display */}
-        <PixelPetDisplay totalKcal={filteredData.totalKcal} goalKcal={2000} />
-
-        {/* Statistics Card (Chart) */}
-        <Card className="border-none shadow-md bg-card overflow-hidden pixel:border-2 pixel:border-border pixel:shadow-none pixel:rounded-none">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex justify-between items-center">
-              <span className="flex items-center gap-2">
-                <Flame className="h-4 w-4 text-orange-500" />
-                {viewMode === 'day' ? '오늘 섭취' : viewMode === 'week' ? '주간 섭취' : '월간 섭취'}
-              </span>
-              <span className="text-lg font-bold text-foreground">
-                {filteredData.totalKcal.toLocaleString()} kcal
-              </span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="h-48 pt-4">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={filteredData.chartData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
-                <XAxis
-                  dataKey="name"
-                  fontSize={12}
-                  tickLine={false}
-                  axisLine={false}
-                  tickMargin={10}
-                  hide={viewMode === 'month' && filteredData.chartData.length > 10} // Hide labels if too crowded
-                />
-                <YAxis fontSize={12} tickLine={false} axisLine={false} hide />
-                <Tooltip
-                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                  cursor={{ fill: 'transparent' }}
-                />
-                <Bar dataKey="kcal" radius={[4, 4, 0, 0]} className="fill-primary" maxBarSize={40}>
-                  {filteredData.chartData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} className={entry.kcal > 2500 ? 'fill-red-400' : 'fill-primary'} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        {/* List Section */}
-        <div>
-          <h2 className="text-lg font-semibold mb-3 px-1">
-            {viewMode === 'day' ? '식사 기록' : '일별 기록'}
-          </h2>
-
-          {loading ? (
-            <div className="space-y-4">
-              <div className="h-24 w-full bg-muted/50 animate-pulse rounded-xl" />
+          {/* Menu Actions */}
+          <div className="space-y-2 pt-2">
+            <div className="text-[10px] font-bold uppercase mb-1 tracking-widest text-black/40">Select Menu</div>
+            <div className="grid grid-cols-3 border-2 border-black/10">
+              <Link href="/recipe" className="flex items-center justify-center gap-2 border-r-2 border-black/10 p-2 hover:bg-black/5 transition-colors group">
+                <Search size={16} className="opacity-40 group-hover:opacity-100 transition-opacity" />
+                <span className="text-[10px] font-bold uppercase tracking-widest">Recipe</span>
+              </Link>
+              <Link href="/collection" className="flex items-center justify-center gap-2 border-r-2 border-black/10 p-2 hover:bg-black/5 transition-colors group">
+                <BookOpen size={16} className="opacity-40 group-hover:opacity-100 transition-opacity" />
+                <span className="text-[10px] font-bold uppercase tracking-widest">Book</span>
+              </Link>
+              <Link href="/statistics" className="flex items-center justify-center gap-2 p-2 hover:bg-black/5 transition-colors group">
+                <BarChart3 size={16} className="opacity-40 group-hover:opacity-100 transition-opacity" />
+                <span className="text-[10px] font-bold uppercase tracking-widest">Report</span>
+              </Link>
             </div>
-          ) : filteredData.list.length === 0 ? (
-            <div className="text-center py-10 text-muted-foreground">
-              기록이 없습니다.
+          </div>
+
+          {/* Order Items (Meals) */}
+          <div className="pt-2">
+            <div className="flex justify-between text-[10px] font-bold border-b-2 border-black mb-2 pb-1 uppercase tracking-widest">
+              <span>Item</span>
+              <span>Kcal</span>
             </div>
-          ) : (
-            <div className="space-y-3">
-              {viewMode === 'day' ? (
-                // Daily Meal List
-                (filteredData.list as MealLog[]).map(meal => (
-                  <Card
-                    key={meal.id}
-                    className="overflow-hidden hover:bg-muted/10 transition-colors cursor-pointer pixel:rounded-none pixel:border-2 pixel:border-border pixel:shadow-none"
-                    onClick={() => setSelectedMeal(meal)}
-                  >
-                    <CardHeader className="p-4 py-3 flex flex-row items-center justify-between space-y-0">
-                      <div className="flex items-center gap-3">
-                        <div className="bg-primary/10 p-2 rounded-full pixel:rounded-none pixel:border pixel:border-border">
-                          {isPixel ? <PixelMeal className="w-4 h-4" /> : <Utensils className="w-4 h-4 text-primary" />}
-                        </div>
-                        <div>
-                          <p className="font-semibold text-sm capitalize">{meal.meal_type || '식사'}</p>
-                          <p className="text-xs text-muted-foreground">{format(parseISO(meal.eaten_at), 'aa h:mm', { locale: ko })}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-sm mr-2">{meal.total_kcal} kcal</span>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 text-muted-foreground hover:text-primary"
-                          onClick={(e) => { e.stopPropagation(); setMealToDuplicate(meal); setDuplicateDate(new Date(meal.eaten_at)); }}
-                        >
-                          <Copy className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                          onClick={(e) => { e.stopPropagation(); setMealToDelete(meal.id); }}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    </CardHeader>
-                    {meal.items_json && (
-                      <CardContent className="p-4 pt-0 pb-3 pl-14">
-                        <p className="text-sm text-muted-foreground line-clamp-2">
-                          {meal.items_json.map(i => i.name).join(', ')}
-                        </p>
-                      </CardContent>
-                    )}
-                  </Card>
-                ))
+
+            <div className="space-y-4 min-h-[120px]">
+              {loading ? (
+                <div className="text-center py-8 text-black/20 text-xs animate-pulse">Printing...</div>
+              ) : filteredData.list.length === 0 ? (
+                <div className="text-center py-8 text-black/20 text-xs italic">
+                  ( No orders yet )
+                </div>
               ) : (
-                // Weekly/Monthly Day List
-                (filteredData.list as any[]).map((day, idx) => (
-                  <Card key={idx} className="overflow-hidden pixel:rounded-none pixel:border-2 pixel:border-border pixel:shadow-none" onClick={() => { setCurrentDate(day.date); setViewMode('day'); }}>
-                    <div className="p-4 flex items-center justify-between cursor-pointer hover:bg-muted/50 transition-colors">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 flex items-center justify-center bg-muted rounded-lg font-bold text-sm pixel:rounded-none">
-                          {format(day.date, 'd', { locale: ko })}
-                        </div>
-                        <div>
-                          <p className="font-semibold text-sm">{format(day.date, 'M월 d일 EEEE', { locale: ko })}</p>
-                          <p className="text-xs text-muted-foreground">식사 {day.meals.length}회</p>
+                (filteredData.list as MealLog[]).map((meal) => (
+                  <div key={meal.id} className="group cursor-pointer select-none" onClick={() => setSelectedMeal(meal)}>
+                    <div className="flex justify-between items-start">
+                      <div className="flex gap-2 items-baseline">
+                        <div className="flex flex-col">
+                          <span className="text-sm font-bold uppercase leading-none mb-1">
+                            {(meal.items_json && meal.items_json[0]) ? meal.items_json[0].name : (meal.raw_text || 'Meal Log')}
+                          </span>
+                          <span className="text-[10px] text-black/40 font-mono tracking-tighter">
+                            <span className="font-bold mr-1">[{meal.meal_type || 'MEAL'}]</span>
+                            {format(parseISO(meal.eaten_at), 'aa h:mm')}
+                            {meal.items_json && meal.items_json.length > 1 && ` (+${meal.items_json.length - 1})`}
+                          </span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-sm">{day.kcal.toLocaleString()} kcal</span>
-                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                      <div className="flex flex-col items-end gap-1">
+                        <span className="text-sm font-bold tabular-nums">{meal.total_kcal}</span>
+                        <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            className="text-[10px] text-blue-400 hover:text-blue-600 hover:underline"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openDuplicateModal(meal);
+                            }}
+                          >
+                            [COPY]
+                          </button>
+                          <button
+                            className="text-[10px] text-red-400 hover:text-red-600 hover:underline"
+                            onClick={(e) => { e.stopPropagation(); setMealToDelete(meal.id); }}
+                          >
+                            [DEL]
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  </Card>
+                  </div>
                 ))
               )}
             </div>
-          )}
+          </div>
+
+          {/* Total */}
+          <div className="border-t-2 border-dashed border-black/20 pt-4 mt-6">
+            <div className="flex justify-between items-end">
+              <span className="text-xl font-bold uppercase tracking-tight">Total</span>
+              <span className="text-xl font-bold tabular-nums">{filteredData.totalKcal.toLocaleString()}</span>
+            </div>
+
+            <div className="flex justify-between text-[10px] text-black/50 mt-1 uppercase tracking-widest border-b border-dashed border-black/20 pb-2 mb-2">
+              <span>Daily Goal</span>
+              <span>2,000</span>
+            </div>
+
+            <div className="space-y-1 text-xs font-mono">
+              <div className="flex justify-between items-center">
+                <span className="text-[10px] text-black/50 uppercase">Carbs</span>
+                <span className="font-bold">{filteredData.totalCarbs}g</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-[10px] text-black/50 uppercase">Protein</span>
+                <span className="font-bold">{filteredData.totalProtein}g</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-[10px] text-black/50 uppercase">Fat</span>
+                <span className="font-bold">{filteredData.totalFat}g</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Barcode Footer */}
+          <div className="pt-8 text-center space-y-4">
+            <div className="barcode opacity-80" />
+            <p className="text-[10px] uppercase font-bold text-black/40 tracking-[0.3em]">
+              Thank you
+            </p>
+          </div>
         </div>
 
+        <div className="receipt-zigzag-bottom" />
       </div>
 
       {/* Floating Action Button */}
-      <div className="fixed bottom-6 right-6 safe-area-bottom z-50">
-        <Link href="/chat">
-          <Button
-            size="lg"
-            className={`h-14 rounded-full shadow-lg hover:shadow-xl transition-all hover:scale-105 active:scale-95 bg-primary text-primary-foreground pixel:rounded-none pixel:h-16 pixel:border-2 pixel:border-border pixel:hover:scale-100 pixel:active:translate-y-1 gap-2 px-6`}
-          >
-            {isPixel ? <PixelPlus className="h-6 w-6" /> : <Plus className="h-6 w-6" />}
-            <span className="font-bold text-base">기록하기</span>
-          </Button>
-        </Link>
-      </div>
+      <Link href="/chat" className="fixed bottom-6 right-6 safe-area-bottom">
+        <Button className="h-14 w-14 rounded-full shadow-xl bg-black hover:bg-gray-800 text-white border-2 border-white flex items-center justify-center">
+          <Plus size={24} />
+        </Button>
+      </Link>
 
-      {/* Details Dialog */}
-      <Dialog open={!!selectedMeal} onOpenChange={(open) => !open && setSelectedMeal(null)}>
-        <DialogContent className="sm:max-w-md pixel:border-2 pixel:border-border pixel:rounded-none max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <span className="capitalize">{selectedMeal?.meal_type || '식사'}</span>
-              <span className="text-muted-foreground font-normal text-sm">
-                {selectedMeal && format(parseISO(selectedMeal.eaten_at), 'yyyy.MM.dd aa h:mm', { locale: ko })}
-              </span>
-            </DialogTitle>
-            <DialogDescription>
-              {selectedMeal?.raw_text}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-2">
-            {/* Nutritional Info */}
-            <div className="bg-muted/30 p-4 rounded-xl border border-border pixel:rounded-none pixel:border-2">
-              <h4 className="text-sm font-semibold mb-3 flex items-center gap-1">
-                <Flame className="h-4 w-4" /> 영양 정보
-              </h4>
-              {selectedMeal?.macros ? (
-                <div className="grid grid-cols-3 gap-2 text-center">
-                  <div className="bg-background p-2 rounded-lg border pixel:rounded-none">
-                    <div className="text-xs text-muted-foreground">탄수화물</div>
-                    <div className="font-bold text-lg">{selectedMeal.macros.carbs}<span className="text-xs font-normal">g</span></div>
+      {/* Meal Detail Modal (Simple Receipt Overlay) */}
+      {
+        selectedMeal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={() => setSelectedMeal(null)}>
+            <div className="bg-white w-full max-w-xs receipt-shadow relative" onClick={e => e.stopPropagation()}>
+              <div className="receipt-zigzag-top" />
+              <div className="p-6">
+                <h2 className="text-xl font-bold uppercase text-center mb-4 border-b-2 border-black pb-2">Detail</h2>
+                <div className="space-y-2 text-sm font-mono">
+                  <div className="flex justify-between">
+                    <span className="text-black/50">Type</span>
+                    <span className="font-bold uppercase">{selectedMeal.meal_type}</span>
                   </div>
-                  <div className="bg-background p-2 rounded-lg border pixel:rounded-none">
-                    <div className="text-xs text-muted-foreground">단백질</div>
-                    <div className="font-bold text-lg">{selectedMeal.macros.protein}<span className="text-xs font-normal">g</span></div>
+                  <div className="flex justify-between">
+                    <span className="text-black/50">Time</span>
+                    <span className="font-bold">{format(parseISO(selectedMeal.eaten_at), 'aa h:mm')}</span>
                   </div>
-                  <div className="bg-background p-2 rounded-lg border pixel:rounded-none">
-                    <div className="text-xs text-muted-foreground">지방</div>
-                    <div className="font-bold text-lg">{selectedMeal.macros.fat}<span className="text-xs font-normal">g</span></div>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-sm text-muted-foreground text-center">상세 영양 정보가 없습니다.</div>
-              )}
-            </div>
-
-            {/* Food Items List */}
-            <div>
-              <h4 className="text-sm font-semibold mb-2 flex items-center gap-1">
-                <Utensils className="h-4 w-4" /> 상세 메뉴
-              </h4>
-              <ul className="space-y-2">
-                {selectedMeal?.items_json?.map((item, idx) => (
-                  <li key={idx} className="bg-muted/30 p-3 rounded-md pixel:rounded-none pixel:border pixel:border-border">
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="text-sm font-medium">{item.name} <span className="text-xs text-muted-foreground">({item.qty})</span></span>
-                      <span className="text-sm font-bold">{item.kcal} kcal</span>
-                    </div>
-                    {item.macros && (
-                      <div className="flex gap-3 text-xs text-muted-foreground border-t border-border/50 pt-1 mt-1">
-                        <span>탄수화물: {item.macros.carbs}g</span>
-                        <span>단백질: {item.macros.protein}g</span>
-                        <span>지방: {item.macros.fat}g</span>
+                  <div className="border-b border-dashed border-black/20 my-2" />
+                  <div className="space-y-1">
+                    {selectedMeal.items_json?.map((item, idx) => (
+                      <div key={idx} className="flex justify-between">
+                        <span>{item.name}</span>
+                        <span className="font-bold">{item.kcal}</span>
                       </div>
-                    )}
-                  </li>
-                ))}
-                <li className="flex justify-between items-center pt-2 border-t mt-2 px-2">
-                  <span className="font-semibold">총 칼로리</span>
-                  <span className="font-bold text-lg text-primary">{selectedMeal?.total_kcal} kcal</span>
-                </li>
-              </ul>
-            </div>
+                    ))}
+                  </div>
+                  <div className="border-t-2 border-black mt-4 pt-2 flex justify-between text-lg font-bold">
+                    <span>Total</span>
+                    <span>{selectedMeal.total_kcal}</span>
+                  </div>
 
-            {/* AI Analysis */}
-            {selectedMeal?.ai_summary && (
-              <div className="bg-primary/5 p-4 rounded-xl border border-primary/10 pixel:rounded-none pixel:border-2 pixel:border-primary/20">
-                <h4 className="text-sm font-semibold mb-2 flex items-center gap-1 text-primary">
-                  <Flame className="h-4 w-4" /> AI 분석 결과
-                </h4>
-                <p className="text-sm leading-relaxed text-muted-foreground whitespace-pre-wrap">
-                  {selectedMeal.ai_summary}
-                </p>
+                  {selectedMeal.macros && (
+                    <div className="grid grid-cols-3 gap-2 mt-2 pt-2 border-t border-dashed border-black/20 text-center">
+                      <div className="flex flex-col">
+                        <span className="text-[10px] text-black/50 uppercase">Carbs</span>
+                        <span className="font-bold">{selectedMeal.macros.carbs}g</span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-[10px] text-black/50 uppercase">Protein</span>
+                        <span className="font-bold">{selectedMeal.macros.protein}g</span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-[10px] text-black/50 uppercase">Fat</span>
+                        <span className="font-bold">{selectedMeal.macros.fat}g</span>
+                      </div>
+                    </div>
+                  )}
+                  {selectedMeal.ai_summary && (
+                    <p className="text-xs text-black/60 mt-4 pt-4 border-t border-dashed border-black/20 italic">
+                      "{selectedMeal.ai_summary}"
+                    </p>
+                  )}
+                </div>
+                <button onClick={() => setSelectedMeal(null)} className="w-full mt-6 bg-black text-white py-2 text-xs font-bold uppercase hover:bg-gray-800">
+                  Close Ticket
+                </button>
               </div>
-            )}
+              <div className="receipt-zigzag-bottom" />
+            </div>
           </div>
+        )
+      }
 
-          <DialogFooter>
-            <Button onClick={() => setSelectedMeal(null)} className="w-full pixel:rounded-none pixel:border-2 pixel:border-border">닫기</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Duplicate Confirmation Modal */}
+      {
+        mealToDuplicate && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setMealToDuplicate(null)}>
+            <div className="bg-white p-6 max-w-xs w-full text-center shadow-xl border-2 border-black" onClick={e => e.stopPropagation()}>
+              <p className="font-bold mb-2">DUPLICATE ITEM</p>
+              <p className="text-xs text-black/60 mb-4">Select the date to copy this meal to.</p>
 
-      {/* Action Dialogs */}
-      <Dialog open={!!mealToDelete} onOpenChange={(open) => !open && setMealToDelete(null)}>
-        <DialogContent className="sm:max-w-md pixel:border-2 pixel:border-border pixel:rounded-none">
-          <DialogHeader>
-            <DialogTitle>기록 삭제</DialogTitle>
-            <DialogDescription>
-              정말로 이 식사 기록을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="sm:justify-end gap-2">
-            <Button variant="secondary" onClick={() => setMealToDelete(null)} className="pixel:rounded-none pixel:border pixel:border-border">취소</Button>
-            <Button variant="destructive" onClick={handleDeleteMeal} className="pixel:rounded-none pixel:border pixel:border-border">삭제</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+              <div className="mb-4">
+                <input
+                  type="date"
+                  className="border-2 border-black p-2 w-full font-mono text-sm uppercase"
+                  defaultValue={format(new Date(), 'yyyy-MM-dd')}
+                  id="duplicate-date-input"
+                />
+              </div>
 
-      <Dialog open={!!mealToDuplicate} onOpenChange={(open) => !open && setMealToDuplicate(null)}>
-        <DialogContent className="sm:max-w-md pixel:border-2 pixel:border-border pixel:rounded-none">
-          <DialogHeader>
-            <DialogTitle>기록 복제 및 날짜 수정</DialogTitle>
-            <DialogDescription>
-              선택한 식사를 복제할 날짜를 선택해주세요.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex justify-center py-4">
-            <Calendar
-              mode="single"
-              selected={duplicateDate}
-              onSelect={(d) => d && setDuplicateDate(d)}
-              className="rounded-md border mx-auto"
-            />
+              <div className="flex gap-2 justify-center">
+                <button onClick={() => setMealToDuplicate(null)} className="flex-1 px-4 py-2 border border-black text-xs font-bold hover:bg-gray-100 uppercase">Cancel</button>
+                <button
+                  onClick={() => {
+                    const dateInput = document.getElementById('duplicate-date-input') as HTMLInputElement;
+                    confirmDuplicate(dateInput.value);
+                  }}
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 uppercase"
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
           </div>
-          <DialogFooter className="sm:justify-end gap-2">
-            <Button variant="secondary" onClick={() => setMealToDuplicate(null)} className="pixel:rounded-none pixel:border pixel:border-border">취소</Button>
-            <Button onClick={handleDuplicateMeal} className="pixel:rounded-none pixel:border-2 pixel:border-border">복제하기</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </main>
+        )
+      }
+
+      {/* Delete Confirmation */}
+      {
+        mealToDelete && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setMealToDelete(null)}>
+            <div className="bg-white p-6 max-w-xs w-full text-center shadow-xl border-2 border-black" onClick={e => e.stopPropagation()}>
+              <p className="font-bold mb-4">DELETE This Item?</p>
+              <div className="flex gap-2 justify-center">
+                <button onClick={() => setMealToDelete(null)} className="px-4 py-2 border border-black text-xs font-bold hover:bg-gray-100">CANCEL</button>
+                <button onClick={handleDeleteMeal} className="px-4 py-2 bg-red-600 text-white text-xs font-bold hover:bg-red-700">DELETE</button>
+              </div>
+            </div>
+          </div>
+        )
+      }
+
+    </main >
   );
 }

@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, Press_Start_2P } from "next/font/google";
-import localFont from "next/font/local";
+import { Geist, Geist_Mono, Space_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 
@@ -14,16 +13,10 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const pressStart2P = Press_Start_2P({
-  weight: "400",
-  variable: "--font-press-start",
+const spaceMono = Space_Mono({
+  weight: ["400", "700"],
+  variable: "--font-space-mono",
   subsets: ["latin"],
-});
-
-const neodgm = localFont({
-  src: "./fonts/neodgm.woff2",
-  variable: "--font-neodgm",
-  display: "swap",
 });
 
 export const metadata: Metadata = {
@@ -38,13 +31,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ko" suppressHydrationWarning>
-      <body className={`${geistSans.variable} ${geistMono.variable} ${pressStart2P.variable} ${neodgm.variable} antialiased`}>
+      <body className={`${spaceMono.variable} ${geistSans.variable} ${geistMono.variable} antialiased font-mono`}>
         <ThemeProvider
           attribute="class"
           defaultTheme="system"
           enableSystem
           disableTransitionOnChange
-          themes={['light', 'dark', 'pixel']}
         >
           {children}
         </ThemeProvider>
