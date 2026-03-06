@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { Send } from "lucide-react";
+import { API_BASE_URL } from "@/lib/api";
 
 type Macros = {
     carbs: number;
@@ -94,7 +95,7 @@ export default function ChatPage() {
         setLoading(true);
 
         try {
-            const res = await fetch("http://localhost:8000/v1/meals/create", {
+            const res = await fetch(`${API_BASE_URL}/v1/meals/create`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -150,7 +151,7 @@ export default function ChatPage() {
         setLoading(true);
 
         try {
-            const res = await fetch("http://localhost:8000/v1/meals/analyze", {
+            const res = await fetch(`${API_BASE_URL}/v1/meals/analyze`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({

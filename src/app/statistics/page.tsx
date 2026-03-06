@@ -9,6 +9,7 @@ import { format, startOfWeek, endOfWeek, addWeeks, subWeeks, startOfMonth, endOf
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { API_BASE_URL } from "@/lib/api";
 
 // Types
 type FoodItem = {
@@ -60,7 +61,7 @@ export default function StatisticsPage() {
                 const fetchStart = startOfWeek(monthStart, { weekStartsOn: 1 });
                 const fetchEnd = endOfWeek(monthEnd, { weekStartsOn: 1 });
 
-                const res = await fetch(`http://localhost:8000/v1/meals?start_date=${format(fetchStart, 'yyyy-MM-dd')}&end_date=${format(fetchEnd, 'yyyy-MM-dd')}`);
+                const res = await fetch(`${API_BASE_URL}/v1/meals?start_date=${format(fetchStart, 'yyyy-MM-dd')}&end_date=${format(fetchEnd, 'yyyy-MM-dd')}`);
                 if (!res.ok) throw new Error("Failed to fetch");
                 const data = await res.json();
                 setMeals(data);
