@@ -56,7 +56,7 @@ export default function Home() {
 
   const fetchMeals = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/v1/meals/?limit=1000`);
+      const response = await fetch(`${API_BASE_URL}/v1/meals?limit=1000`);
       if (!response.ok) throw new Error('Failed to fetch meals');
       const data = await response.json();
       setMeals(data);
