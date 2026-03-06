@@ -4,6 +4,8 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { Send } from "lucide-react";
 import { API_BASE_URL } from "@/lib/api";
+import { getAuthHeaders, removeToken } from "@/lib/auth";
+import { useRouter } from "next/navigation";
 
 type Macros = {
     carbs: number;
@@ -27,20 +29,52 @@ type Message = {
 };
 
 export default function ChatPage() {
-    const [messages, setMessages] = useState<Message[]>([
-        { id: 1, role: 'assistant', content: '무엇을 드셨는지 자세하게 알려주세요.\n\n예시: "오늘 아침으로 닭가슴살 샐러드랑 사과 하나 먹었어."' }
-    ]);
+    const router = useRouter();
+    const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState("");
     const [manualInput, setManualInput] = useState("");
     const [loading, setLoading] = useState(false);
+    const [isBotTyping, setIsBotTyping] = useState(false);
+    const [livePrintText, setLivePrintText] = useState("");
     const [pendingMeal, setPendingMeal] = useState<any>(null); // Store analyzed data before saving
     const scrollRef = useRef<HTMLDivElement>(null);
+    const nextMessageIdRef = useRef(1);
+    const hasBootedRef = useRef(false);
 
     useEffect(() => {
         if (scrollRef.current) {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
         }
-    }, [messages]);
+    }, [messages, isBotTyping, livePrintText]);
+
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    const pushMessage = (role: Message["role"], content: string) => {
+        const id = nextMessageIdRef.current;
+        nextMessageIdRef.current += 1;
+        setMessages((prev) => [...prev, { id, role, content }]);
+    };
+
+    const pushBotMessage = async (content: string, delayMs = 220) => {
+        setIsBotTyping(true);
+        await sleep(delayMs);
+        setIsBotTyping(false);
+
+        setLivePrintText("");
+        for (let i = 1; i <= content.length; i += 1) {
+            setLivePrintText(content.slice(0, i));
+            await sleep(22);
+        }
+
+        pushMessage("assistant", content);
+        setLivePrintText("");
+    };
+
+    useEffect(() => {
+        if (hasBootedRef.current) return;
+        hasBootedRef.current = true;
+        void pushBotMessage('무엇을 드셨는지 자세하게 알려주세요.\n\n예시: "오늘 아침으로 닭가슴살 샐러드랑 사과 하나 먹었어."', 120);
+    }, []);
 
     const formatAnalysisText = (meal: any) => {
         let text = `I found:\n`;
@@ -97,7 +131,10 @@ export default function ChatPage() {
         try {
             const res = await fetch(`${API_BASE_URL}/v1/meals/create`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: {
+                    "Content-Type": "application/json",
+                    ...getAuthHeaders()
+                },
                 body: JSON.stringify({
                     ...pendingMeal,
                     total_kcal: pendingMeal.total_kcal,
@@ -110,33 +147,26 @@ export default function ChatPage() {
                 }),
             });
 
+            if (res.status === 401) {
+                removeToken();
+                router.push("/login");
+                return;
+            }
             if (!res.ok) throw new Error("Failed to save meal");
             const data = await res.json();
 
-            setMessages(prev => [...prev, {
-                id: Date.now(),
-                role: 'assistant',
-                content: formatAnalysisText(pendingMeal) + `\n\n저장되었습니다! 주문번호 #${data.id}`
-            }]);
+            await pushBotMessage(formatAnalysisText(pendingMeal) + `\n\n저장되었습니다! 주문번호 #${data.id}`);
             setPendingMeal(null);
         } catch (error) {
             console.error(error);
-            setMessages(prev => [...prev, {
-                id: Date.now(),
-                role: 'assistant',
-                content: "저장에 실패했습니다."
-            }]);
+            await pushBotMessage("저장에 실패했습니다.");
         } finally {
             setLoading(false);
         }
     };
 
-    const handleCancel = () => {
-        setMessages(prev => [...prev, {
-            id: Date.now(),
-            role: 'assistant',
-            content: "취소했습니다. 다시 말씀해주세요."
-        }]);
+    const handleCancel = async () => {
+        await pushBotMessage("취소했습니다. 다시 말씀해주세요.");
         setPendingMeal(null);
     };
 
@@ -145,7 +175,8 @@ export default function ChatPage() {
 
         if (pendingMeal) setPendingMeal(null);
 
-        const userMsg: Message = { id: Date.now(), role: 'user', content: input };
+        const userMsg: Message = { id: nextMessageIdRef.current, role: 'user', content: input };
+        nextMessageIdRef.current += 1;
         setMessages(prev => [...prev, userMsg]);
         setInput("");
         setLoading(true);
@@ -153,7 +184,10 @@ export default function ChatPage() {
         try {
             const res = await fetch(`${API_BASE_URL}/v1/meals/analyze`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: {
+                    "Content-Type": "application/json",
+                    ...getAuthHeaders()
+                },
                 body: JSON.stringify({
                     text: userMsg.content,
                     client_local_time: new Date().toISOString(),
@@ -162,6 +196,11 @@ export default function ChatPage() {
                 }),
             });
 
+            if (res.status === 401) {
+                removeToken();
+                router.push("/login");
+                return;
+            }
             if (!res.ok) throw new Error("Failed to analyze meal");
             const data = await res.json();
 
@@ -186,11 +225,7 @@ export default function ChatPage() {
 
         } catch (error) {
             console.error(error);
-            setMessages(prev => [...prev, {
-                id: Date.now() + 1,
-                role: 'assistant',
-                content: "오류가 발생했습니다. 다시 시도해주세요."
-            }]);
+            await pushBotMessage("오류가 발생했습니다. 다시 시도해주세요.");
         } finally {
             setLoading(false);
         }
@@ -250,17 +285,9 @@ export default function ChatPage() {
                     </div>
 
                     {messages.map((msg) => (
-                        <div key={msg.id} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                            <span className="text-[10px] font-bold text-black/40 mb-1 uppercase">
-                                {msg.role === 'user' ? 'You' : 'System'}
-                            </span>
-                            <div className={`
-                        max-w-[85%] p-3 text-sm border-2 border-black
-                        ${msg.role === 'user'
-                                    ? 'bg-black text-white rounded-tl-lg rounded-bl-lg rounded-br-lg'
-                                    : 'bg-white text-black rounded-tr-lg rounded-br-lg rounded-bl-lg shadow-[2px_2px_0px_0px_rgba(0,0,0,0.1)]'}
-                    `}>
-                                <pre className="whitespace-pre-wrap font-mono">{msg.content}</pre>
+                        <div key={msg.id} className="print-line text-[11px] leading-relaxed border-b border-dashed border-black/10 pb-1">
+                            <div className={`whitespace-pre-wrap ${msg.role === "assistant" ? "text-black/80" : "text-black font-bold"}`}>
+                                {msg.role === "assistant" ? `BITELOG > ${msg.content}` : `> ${msg.content}`}
                             </div>
                             {msg.buttons && (
                                 <div className="mt-2 flex gap-2">
@@ -303,11 +330,21 @@ export default function ChatPage() {
                         </div>
                     ))}
 
-                    {loading && (
-                        <div className="flex flex-col items-start">
-                            <span className="text-[10px] font-bold text-black/40 mb-1 uppercase">System</span>
-                            <div className="bg-black/5 p-2 text-xs border border-black/10 animate-pulse">
-                                Processing...
+                    {(loading || isBotTyping) && (
+                        <div className="print-line text-[11px] text-black/60 border-b border-dashed border-black/10 pb-1">
+                            <div className="typing-wrap">
+                                <span className="mr-1">BITELOG &gt;</span>
+                                <span className="typing-dot" />
+                                <span className="typing-dot" />
+                                <span className="typing-dot" />
+                            </div>
+                        </div>
+                    )}
+                    {!!livePrintText && (
+                        <div className="print-line text-[11px] text-black/80 border-b border-dashed border-black/10 pb-1">
+                            <div className="whitespace-pre-wrap">
+                                {`BITELOG > ${livePrintText}`}
+                                <span className="print-cursor" />
                             </div>
                         </div>
                     )}
@@ -447,6 +484,55 @@ export default function ChatPage() {
 
                 <div className="receipt-zigzag-bottom" />
             </div>
+            <style jsx>{`
+                .typing-wrap {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 4px;
+                }
+                .typing-dot {
+                    width: 4px;
+                    height: 4px;
+                    border-radius: 9999px;
+                    background: rgba(0, 0, 0, 0.7);
+                    animation: pulse 1s infinite ease-in-out;
+                }
+                .typing-dot:nth-child(2) {
+                    animation-delay: 0.2s;
+                }
+                .typing-dot:nth-child(3) {
+                    animation-delay: 0.4s;
+                }
+                .print-cursor {
+                    display: inline-block;
+                    width: 6px;
+                    height: 1em;
+                    background: rgba(0, 0, 0, 0.8);
+                    margin-left: 3px;
+                    vertical-align: text-bottom;
+                    animation: blink 1s steps(1, end) infinite;
+                }
+                @keyframes pulse {
+                    0%,
+                    80%,
+                    100% {
+                        opacity: 0.2;
+                    }
+                    40% {
+                        opacity: 1;
+                    }
+                }
+                @keyframes blink {
+                    0%,
+                    49% {
+                        opacity: 1;
+                    }
+                    50%,
+                    100% {
+                        opacity: 0;
+                    }
+                }
+            `}</style>
         </main>
     );
 }

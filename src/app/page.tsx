@@ -1,13 +1,15 @@
 "use client";
 
-import { useTheme } from "next-themes";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState, useEffect, useMemo } from "react";
 import { format, addDays, subDays, isSameDay, parseISO, startOfMonth, endOfMonth, getDay, addMonths, subMonths } from "date-fns";
 import { ko } from "date-fns/locale";
-import { Search, BookOpen, ChevronLeft, ChevronRight, Plus, BarChart3 } from "lucide-react";
+import { Search, BookOpen, ChevronLeft, ChevronRight, Plus, BarChart3, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { API_BASE_URL } from "@/lib/api";
+import { getAuthHeaders, getToken, removeToken } from "@/lib/auth";
+import { createRecentDemoMeals } from "@/lib/demo-data";
 
 // Types
 type FoodItem = {
@@ -40,8 +42,13 @@ type MealLog = {
 };
 
 export default function Home() {
+  const router = useRouter();
   const [meals, setMeals] = useState<MealLog[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isDemoMode, setIsDemoMode] = useState(false);
+  const [showDemoTutorial, setShowDemoTutorial] = useState(false);
+  const [showLoginPrompt, setShowLoginPrompt] = useState(false);
+  const [pendingActionLabel, setPendingActionLabel] = useState("이 기능");
 
   const [currentDate, setCurrentDate] = useState(new Date());
 
@@ -50,18 +57,61 @@ export default function Home() {
   const [mealToDuplicate, setMealToDuplicate] = useState<MealLog | null>(null);
   const [selectedMeal, setSelectedMeal] = useState<MealLog | null>(null);
 
+  const DEMO_TUTORIAL_SEEN_KEY = "bitelog_demo_tutorial_seen";
+
+  const openDemoTutorialIfNeeded = () => {
+    if (typeof window === "undefined") return;
+    const seen = localStorage.getItem(DEMO_TUTORIAL_SEEN_KEY);
+    if (!seen) {
+      setShowDemoTutorial(true);
+    }
+  };
+
+  const closeDemoTutorial = () => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem(DEMO_TUTORIAL_SEEN_KEY, "1");
+    }
+    setShowDemoTutorial(false);
+  };
+
+  const openLoginPrompt = (actionLabel: string) => {
+    setPendingActionLabel(actionLabel);
+    setShowLoginPrompt(true);
+  };
+
   useEffect(() => {
     fetchMeals();
   }, []);
 
   const fetchMeals = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/v1/meals?limit=1000`);
+      const token = getToken();
+      if (!token) {
+        setIsDemoMode(true);
+        setMeals(createRecentDemoMeals());
+        openDemoTutorialIfNeeded();
+        return;
+      }
+
+      const response = await fetch(`${API_BASE_URL}/v1/meals?limit=1000`, {
+        headers: getAuthHeaders(),
+      });
+      if (response.status === 401) {
+        removeToken();
+        setIsDemoMode(true);
+        setMeals(createRecentDemoMeals());
+        openDemoTutorialIfNeeded();
+        return;
+      }
       if (!response.ok) throw new Error('Failed to fetch meals');
       const data = await response.json();
+      setIsDemoMode(false);
       setMeals(data);
     } catch (error) {
       console.error(error);
+      setIsDemoMode(true);
+      setMeals(createRecentDemoMeals());
+      openDemoTutorialIfNeeded();
     } finally {
       setLoading(false);
     }
@@ -79,11 +129,21 @@ export default function Home() {
 
   const handlePrev = () => setCurrentDate(prev => subDays(prev, 1));
   const handleNext = () => setCurrentDate(prev => addDays(prev, 1));
+  const handleProfileClick = () => {
+    if (isDemoMode) {
+      openLoginPrompt("프로필 보기");
+      return;
+    }
+    router.push("/profile");
+  };
 
   const handleDeleteMeal = async () => {
-    if (!mealToDelete) return;
+    if (isDemoMode || !mealToDelete) return;
     try {
-      await fetch(`${API_BASE_URL}/v1/meals/${mealToDelete}`, { method: 'DELETE' });
+      await fetch(`${API_BASE_URL}/v1/meals/${mealToDelete}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+      });
       setMeals(prev => prev.filter(m => m.id !== mealToDelete));
       setMealToDelete(null);
     } catch (e) {
@@ -93,11 +153,15 @@ export default function Home() {
 
   // Handle Initial Click on Copy
   const openDuplicateModal = (meal: MealLog) => {
+    if (isDemoMode) {
+      openLoginPrompt("식단 복제");
+      return;
+    }
     setMealToDuplicate(meal);
   };
 
   const confirmDuplicate = async (targetDateStr: string) => {
-    if (!mealToDuplicate) return;
+    if (isDemoMode || !mealToDuplicate) return;
 
     try {
       // Create new date object from selected date string (YYYY-MM-DD)
@@ -114,15 +178,12 @@ export default function Home() {
         eaten_at: targetDate.toISOString(),
       };
 
-      // Remove ID and created_at
-      // @ts-ignore
-      delete newMeal.id;
-      // @ts-ignore
-      delete newMeal.created_at;
-
       const res = await fetch(`${API_BASE_URL}/v1/meals/create`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders()
+        },
         body: JSON.stringify({
           user_id: 1,
           raw_text: newMeal.raw_text,
@@ -160,10 +221,18 @@ export default function Home() {
         <div className="p-6 space-y-6">
 
           {/* Receipt Header */}
-          <div className="text-center space-y-2">
-            <h1 className="text-4xl font-bold tracking-tighter uppercase text-black transform scale-y-110">
-              BITELOG
-            </h1>
+          <div className="relative text-center space-y-2">
+            <button
+              type="button"
+              onClick={handleProfileClick}
+              className="absolute top-0 right-0 z-20 p-1 opacity-50 hover:opacity-100 transition-opacity border-2 border-transparent hover:border-black cursor-pointer"
+              aria-label="프로필 열기"
+            >
+              <User size={18} />
+            </button>
+            <div className="flex justify-center mb-1">
+              <img src="/logo.png" alt="BITELOG" className="h-[46px] object-contain mix-blend-multiply" style={{ imageRendering: "pixelated" }} />
+            </div>
             <div className="flex flex-col text-[10px] font-bold text-black/60 uppercase tracking-widest border-b-2 border-dashed border-black/20 pb-4">
               <span>Healthy Life Store</span>
               <span>Order #{format(currentDate, 'yyMMdd')}</span>
@@ -335,7 +404,14 @@ export default function Home() {
                           </button>
                           <button
                             className="text-[10px] text-red-400 hover:text-red-600 hover:underline"
-                            onClick={(e) => { e.stopPropagation(); setMealToDelete(meal.id); }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (isDemoMode) {
+                                openLoginPrompt("식단 삭제");
+                                return;
+                              }
+                              setMealToDelete(meal.id);
+                            }}
                           >
                             [DEL]
                           </button>
@@ -376,12 +452,24 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Barcode Footer */}
-          <div className="pt-8 text-center space-y-4">
-            <div className="barcode opacity-80" />
-            <p className="text-[10px] uppercase font-bold text-black/40 tracking-[0.3em]">
-              Thank you
-            </p>
+          {/* QR Footer */}
+          <div className="text-center mt-3">
+            <div className="flex items-center justify-center gap-4 opacity-80 mix-blend-multiply border-t-2 border-dashed border-black/20 pt-[35px] pb-[10px]">
+              <div className="flex flex-col items-center gap-0">
+                <img src="/qr_code.png" alt="QR Code" className="h-[76px] w-[76px] object-contain" style={{ imageRendering: "pixelated" }} />
+                <span className="text-[7px] font-bold text-black uppercase tracking-[0.2em]">
+                  Scan Here
+                </span>
+              </div>
+              <div className="text-left flex-1 max-w-[140px]">
+                <p className="text-[10px] font-bold uppercase tracking-widest leading-tight text-black">
+                  Your Nutrition Journey
+                </p>
+                <p className="text-[8px] text-black/60 mt-1.5 leading-relaxed tracking-wide">
+                  Every bite tells a story. Keep logging your meals to discover patterns and build a healthier lifestyle.
+                </p>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -389,11 +477,20 @@ export default function Home() {
       </div>
 
       {/* Floating Action Button */}
-      <Link href="/chat" className="fixed bottom-6 right-6 safe-area-bottom">
-        <Button className="h-14 w-14 rounded-full shadow-xl bg-black hover:bg-gray-800 text-white border-2 border-white flex items-center justify-center">
+      {isDemoMode ? (
+        <Button
+          onClick={() => openLoginPrompt("식단 추가")}
+          className="fixed bottom-6 right-6 safe-area-bottom h-14 w-14 rounded-full shadow-xl bg-black hover:bg-gray-800 text-white border-2 border-white flex items-center justify-center"
+        >
           <Plus size={24} />
         </Button>
-      </Link>
+      ) : (
+        <Link href="/chat" className="fixed bottom-6 right-6 safe-area-bottom">
+          <Button className="h-14 w-14 rounded-full shadow-xl bg-black hover:bg-gray-800 text-white border-2 border-white flex items-center justify-center">
+            <Plus size={24} />
+          </Button>
+        </Link>
+      )}
 
       {/* Meal Detail Modal (Simple Receipt Overlay) */}
       {
@@ -444,7 +541,7 @@ export default function Home() {
                   )}
                   {selectedMeal.ai_summary && (
                     <p className="text-xs text-black/60 mt-4 pt-4 border-t border-dashed border-black/20 italic">
-                      "{selectedMeal.ai_summary}"
+                      &quot;{selectedMeal.ai_summary}&quot;
                     </p>
                   )}
                 </div>
@@ -506,6 +603,69 @@ export default function Home() {
           </div>
         )
       }
+
+      {showDemoTutorial && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/55 backdrop-blur-sm">
+          <div className="w-full max-w-sm bg-white border-2 border-black shadow-xl p-5 space-y-4">
+            <div className="space-y-1">
+              <p className="text-xs font-bold uppercase tracking-widest text-black/50">Quick Tour</p>
+              <h2 className="text-lg font-bold">비로그인 데모 둘러보기</h2>
+              <p className="text-sm text-black/70">최근 한달 샘플 데이터를 자유롭게 탐색할 수 있어요.</p>
+            </div>
+
+            <div className="space-y-2 text-xs text-black/80 leading-relaxed border-y border-dashed border-black/20 py-3">
+              <p>1. 날짜를 이동하며 일자별 식단을 확인하세요.</p>
+              <p>2. 아이템을 눌러 상세 영양정보를 볼 수 있어요.</p>
+              <p>3. 추가/복제/삭제는 로그인 후 바로 사용할 수 있습니다.</p>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={closeDemoTutorial}
+                className="flex-1 border border-black py-2 text-xs font-bold hover:bg-gray-100"
+              >
+                둘러보기 시작
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  closeDemoTutorial();
+                  router.push("/login");
+                }}
+                className="flex-1 bg-black text-white py-2 text-xs font-bold hover:bg-gray-800"
+              >
+                로그인하기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showLoginPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setShowLoginPrompt(false)}>
+          <div className="w-full max-w-xs bg-white border-2 border-black shadow-xl p-5 text-center space-y-3" onClick={(e) => e.stopPropagation()}>
+            <p className="text-sm font-bold">{pendingActionLabel}은(는) 로그인 후 사용할 수 있어요</p>
+            <p className="text-xs text-black/60">데모에서는 조회만 제공됩니다.</p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setShowLoginPrompt(false)}
+                className="flex-1 border border-black py-2 text-xs font-bold hover:bg-gray-100"
+              >
+                닫기
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push("/login")}
+                className="flex-1 bg-black text-white py-2 text-xs font-bold hover:bg-gray-800"
+              >
+                로그인
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </main >
   );
