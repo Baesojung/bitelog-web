@@ -28,6 +28,32 @@ type Message = {
     suggestions?: FoodItem[];
 };
 
+type PendingMeal = {
+    user_id: number;
+    raw_text: string;
+    meal_type: string;
+    eaten_at: string;
+    macros?: Macros;
+    total_kcal: number;
+    ai_summary: string;
+    food_items: FoodItem[];
+    suggestions?: FoodItem[];
+};
+
+const MEAL_TYPE_OPTIONS = ["아침", "점심", "저녁", "간식"] as const;
+const MEAL_TYPE_MAP: Record<string, (typeof MEAL_TYPE_OPTIONS)[number]> = {
+    breakfast: "아침",
+    lunch: "점심",
+    dinner: "저녁",
+    snack: "간식",
+    아침: "아침",
+    점심: "점심",
+    저녁: "저녁",
+    간식: "간식",
+};
+
+const normalizeMealType = (value?: string | null) => MEAL_TYPE_MAP[value || ""] || "간식";
+
 export default function ChatPage() {
     const router = useRouter();
     const [messages, setMessages] = useState<Message[]>([]);
@@ -36,7 +62,7 @@ export default function ChatPage() {
     const [loading, setLoading] = useState(false);
     const [isBotTyping, setIsBotTyping] = useState(false);
     const [livePrintText, setLivePrintText] = useState("");
-    const [pendingMeal, setPendingMeal] = useState<any>(null); // Store analyzed data before saving
+    const [pendingMeal, setPendingMeal] = useState<PendingMeal | null>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
     const nextMessageIdRef = useRef(1);
     const hasBootedRef = useRef(false);
@@ -90,6 +116,37 @@ export default function ChatPage() {
 
         text += `\n${meal.ai_summary || meal.message}`;
         return text;
+    };
+
+    const getFollowUpPrompt = () => "\n\n더 추가할 항목이 있으면 계속 말씀해 주세요. 없으면 아래에서 저장해 주세요.";
+
+    const mergeMeals = (currentMeal: PendingMeal, nextMeal: PendingMeal): PendingMeal => {
+        const mergedFoodItems = [...currentMeal.food_items, ...nextMeal.food_items];
+        const mergedMacros = currentMeal.macros || nextMeal.macros
+            ? {
+                carbs: (currentMeal.macros?.carbs || 0) + (nextMeal.macros?.carbs || 0),
+                protein: (currentMeal.macros?.protein || 0) + (nextMeal.macros?.protein || 0),
+                fat: (currentMeal.macros?.fat || 0) + (nextMeal.macros?.fat || 0),
+            }
+            : undefined;
+        const existingNames = new Set(mergedFoodItems.map((item) => item.name));
+        const mergedSuggestions = [...(currentMeal.suggestions || []), ...(nextMeal.suggestions || [])]
+            .filter((item, index, list) => (
+                !existingNames.has(item.name)
+                && list.findIndex((candidate) => candidate.name === item.name) === index
+            ));
+
+        return {
+            ...currentMeal,
+            raw_text: `${currentMeal.raw_text}\n${nextMeal.raw_text}`.trim(),
+            eaten_at: nextMeal.eaten_at || currentMeal.eaten_at,
+            meal_type: currentMeal.meal_type || nextMeal.meal_type,
+            total_kcal: currentMeal.total_kcal + nextMeal.total_kcal,
+            macros: mergedMacros,
+            ai_summary: nextMeal.ai_summary || currentMeal.ai_summary,
+            food_items: mergedFoodItems,
+            suggestions: mergedSuggestions,
+        };
     };
 
     const handleAddSuggestion = (item: FoodItem) => {
@@ -155,7 +212,7 @@ export default function ChatPage() {
             if (!res.ok) throw new Error("Failed to save meal");
             const data = await res.json();
 
-            await pushBotMessage(formatAnalysisText(pendingMeal) + `\n\n저장되었습니다! 주문번호 #${data.id}`);
+            await pushBotMessage(`저장되었습니다! 주문번호 #${data.id}`);
             setPendingMeal(null);
         } catch (error) {
             console.error(error);
@@ -173,7 +230,7 @@ export default function ChatPage() {
     const handleSend = async () => {
         if (!input.trim() || loading) return;
 
-        if (pendingMeal) setPendingMeal(null);
+        const currentPendingMeal = pendingMeal;
 
         const userMsg: Message = { id: nextMessageIdRef.current, role: 'user', content: input };
         nextMessageIdRef.current += 1;
@@ -204,10 +261,10 @@ export default function ChatPage() {
             if (!res.ok) throw new Error("Failed to analyze meal");
             const data = await res.json();
 
-            const newMealData = {
+            const analyzedMeal: PendingMeal = {
                 user_id: 1,
                 raw_text: userMsg.content,
-                meal_type: data.meal_type,
+                meal_type: normalizeMealType(data.meal_type),
                 eaten_at: data.eaten_at || new Date().toISOString(),
                 macros: data.macros,
                 total_kcal: data.total_kcal,
@@ -216,12 +273,17 @@ export default function ChatPage() {
             };
 
             // Do not add message yet, just show the review UI
-            const mealWithSuggestions = {
-                ...newMealData,
+            const mealWithSuggestions: PendingMeal = {
+                ...analyzedMeal,
                 suggestions: data.suggestions || []
             };
 
-            setPendingMeal(mealWithSuggestions);
+            const nextPendingMeal = currentPendingMeal
+                ? mergeMeals(currentPendingMeal, mealWithSuggestions)
+                : mealWithSuggestions;
+
+            setPendingMeal(nextPendingMeal);
+            await pushBotMessage(formatAnalysisText(nextPendingMeal) + getFollowUpPrompt());
 
         } catch (error) {
             console.error(error);
@@ -330,7 +392,7 @@ export default function ChatPage() {
                         </div>
                     ))}
 
-                    {(loading || isBotTyping) && (
+                    {(loading || isBotTyping) && !livePrintText && (
                         <div className="print-line text-[11px] text-black/60 border-b border-dashed border-black/10 pb-1">
                             <div className="typing-wrap">
                                 <span className="mr-1">BITELOG &gt;</span>
@@ -359,10 +421,9 @@ export default function ChatPage() {
                                         onChange={(e) => setPendingMeal({ ...pendingMeal, meal_type: e.target.value })}
                                         className="font-bold text-lg mb-1 bg-transparent border-b border-black/20 focus:outline-none cursor-pointer"
                                     >
-                                        <option value="breakfast">BREAKFAST</option>
-                                        <option value="lunch">LUNCH</option>
-                                        <option value="dinner">DINNER</option>
-                                        <option value="snack">SNACK</option>
+                                        {MEAL_TYPE_OPTIONS.map((option) => (
+                                            <option key={option} value={option}>{option}</option>
+                                        ))}
                                     </select>
                                     <input
                                         type="datetime-local"

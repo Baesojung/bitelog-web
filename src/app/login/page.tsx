@@ -95,7 +95,7 @@ export default function LoginPage() {
         const boot = async () => {
             await pushBotMessage("반가워요. 로그인 혹은 회원가입을 도와드리겠습니다.", 120);
             await sleep(1000);
-            await pushBotMessage("당신의 이메일은...?", 160);
+            await pushBotMessage("이메일을 입력해 주세요.", 160);
         };
 
         void boot();
@@ -384,8 +384,8 @@ export default function LoginPage() {
                         <div className="flex justify-center mb-1">
                             <img src="/logo.png" alt="BITELOG" className="h-[46px] object-contain mix-blend-multiply" style={{ imageRendering: "pixelated" }} />
                         </div>
-                        <div className="text-[10px] font-bold text-black/60 uppercase tracking-widest">
-                            Receipt Login
+                        <div className="text-[10px] font-bold text-black/60 tracking-widest">
+                            로그인
                         </div>
                     </div>
 
@@ -492,7 +492,7 @@ export default function LoginPage() {
                                     ? loading
                                         ? "Creating Account..."
                                         : "Sign Up & Start"
-                                    : "Send"}
+                                    : "확인"}
                             </button>
                         )}
 
@@ -507,11 +507,6 @@ export default function LoginPage() {
                         )}
                     </div>
 
-                    <div className="mt-6 text-center">
-                        <Link href="/register" className="text-xs font-bold uppercase underline hover:text-gray-600 tracking-widest">
-                            Register page directly
-                        </Link>
-                    </div>
                 </div>
                 <div className="receipt-zigzag-bottom" />
             </div>

@@ -76,12 +76,15 @@ export const createRecentDemoMeals = (baseDate = new Date()): DemoMealLog[] => {
   const today = startOfDay(baseDate);
   const meals: DemoMealLog[] = [];
   let nextId = -1;
+  const breakfastOnlyDays = new Set([4, 11, 23]);
 
   for (let dayOffset = 0; dayOffset < 30; dayOffset += 1) {
     const day = subDays(today, dayOffset);
-    const dayMealTypes = dayOffset % 2 === 0
-      ? ["breakfast", "lunch", "dinner", "snack"]
-      : ["breakfast", "lunch", "dinner"];
+    const dayMealTypes: MealType[] = breakfastOnlyDays.has(dayOffset)
+      ? ["breakfast"]
+      : dayOffset % 2 === 0
+        ? ["breakfast", "lunch", "dinner", "snack"]
+        : ["breakfast", "lunch", "dinner"];
 
     dayMealTypes.forEach((mealType, mealIndex) => {
       const template = getTemplate(mealType, dayOffset, mealIndex);

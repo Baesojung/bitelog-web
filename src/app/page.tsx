@@ -41,11 +41,64 @@ type MealLog = {
   created_at: string;
 };
 
+type MealEditForm = {
+  raw_text: string;
+  meal_type: string;
+  eaten_at: string;
+  total_kcal: string;
+  carbs: string;
+  protein: string;
+  fat: string;
+  ai_summary: string;
+  items: FoodItem[];
+};
+
+type UserProfile = {
+  daily_goal_kcal: number;
+};
+
+const MEAL_TYPE_OPTIONS = ["아침", "점심", "저녁", "간식"] as const;
+const MEAL_TYPE_MAP: Record<string, (typeof MEAL_TYPE_OPTIONS)[number]> = {
+  breakfast: "아침",
+  lunch: "점심",
+  dinner: "저녁",
+  snack: "간식",
+  아침: "아침",
+  점심: "점심",
+  저녁: "저녁",
+  간식: "간식",
+};
+
+const normalizeMealType = (value?: string | null) => MEAL_TYPE_MAP[value || ""] || "간식";
+const toInputDateTime = (value: string) => format(parseISO(value), "yyyy-MM-dd'T'HH:mm");
+
+const buildEditForm = (meal: MealLog): MealEditForm => ({
+  raw_text: meal.raw_text || "",
+  meal_type: normalizeMealType(meal.meal_type),
+  eaten_at: toInputDateTime(meal.eaten_at),
+  total_kcal: String(meal.total_kcal ?? 0),
+  carbs: String(meal.macros?.carbs ?? 0),
+  protein: String(meal.macros?.protein ?? 0),
+  fat: String(meal.macros?.fat ?? 0),
+  ai_summary: meal.ai_summary || "",
+  items: (meal.items_json || []).map((item) => ({
+    name: item.name || "",
+    qty: item.qty || "",
+    kcal: item.kcal || 0,
+    macros: {
+      carbs: item.macros?.carbs || 0,
+      protein: item.macros?.protein || 0,
+      fat: item.macros?.fat || 0,
+    },
+  })),
+});
+
 export default function Home() {
   const router = useRouter();
   const [meals, setMeals] = useState<MealLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [isDemoMode, setIsDemoMode] = useState(false);
+  const [dailyGoalKcal, setDailyGoalKcal] = useState(2000);
   const [showDemoTutorial, setShowDemoTutorial] = useState(false);
   const [showLoginPrompt, setShowLoginPrompt] = useState(false);
   const [pendingActionLabel, setPendingActionLabel] = useState("이 기능");
@@ -56,6 +109,10 @@ export default function Home() {
   const [mealToDelete, setMealToDelete] = useState<number | null>(null);
   const [mealToDuplicate, setMealToDuplicate] = useState<MealLog | null>(null);
   const [selectedMeal, setSelectedMeal] = useState<MealLog | null>(null);
+  const [isEditingMeal, setIsEditingMeal] = useState(false);
+  const [isSavingMeal, setIsSavingMeal] = useState(false);
+  const [mealEditError, setMealEditError] = useState("");
+  const [mealEditForm, setMealEditForm] = useState<MealEditForm | null>(null);
 
   const DEMO_TUTORIAL_SEEN_KEY = "bitelog_demo_tutorial_seen";
 
@@ -89,28 +146,36 @@ export default function Home() {
       if (!token) {
         setIsDemoMode(true);
         setMeals(createRecentDemoMeals());
+        setDailyGoalKcal(2000);
         openDemoTutorialIfNeeded();
         return;
       }
 
-      const response = await fetch(`${API_BASE_URL}/v1/meals?limit=1000`, {
-        headers: getAuthHeaders(),
-      });
-      if (response.status === 401) {
+      const headers = getAuthHeaders();
+      const [mealsResponse, profileResponse] = await Promise.all([
+        fetch(`${API_BASE_URL}/v1/meals?limit=1000`, { headers }),
+        fetch(`${API_BASE_URL}/v1/users/me`, { headers }),
+      ]);
+      if (mealsResponse.status === 401 || profileResponse.status === 401) {
         removeToken();
         setIsDemoMode(true);
         setMeals(createRecentDemoMeals());
+        setDailyGoalKcal(2000);
         openDemoTutorialIfNeeded();
         return;
       }
-      if (!response.ok) throw new Error('Failed to fetch meals');
-      const data = await response.json();
+      if (!mealsResponse.ok) throw new Error('Failed to fetch meals');
+      if (!profileResponse.ok) throw new Error('Failed to fetch profile');
+      const data = await mealsResponse.json();
+      const profile: UserProfile = await profileResponse.json();
       setIsDemoMode(false);
       setMeals(data);
+      setDailyGoalKcal(profile.daily_goal_kcal ?? 2000);
     } catch (error) {
       console.error(error);
       setIsDemoMode(true);
       setMeals(createRecentDemoMeals());
+      setDailyGoalKcal(2000);
       openDemoTutorialIfNeeded();
     } finally {
       setLoading(false);
@@ -126,6 +191,10 @@ export default function Home() {
     const totalFat = list.reduce((acc, curr) => acc + (curr.macros?.fat || 0), 0);
     return { list, totalKcal, totalCarbs, totalProtein, totalFat };
   }, [meals, currentDate]);
+
+  const goalProgress = dailyGoalKcal > 0
+    ? Math.round((filteredData.totalKcal / dailyGoalKcal) * 100)
+    : 0;
 
   const handlePrev = () => setCurrentDate(prev => subDays(prev, 1));
   const handleNext = () => setCurrentDate(prev => addDays(prev, 1));
@@ -208,6 +277,117 @@ export default function Home() {
 
     } catch (error) {
       console.error("Duplicate failed", error);
+    }
+  };
+
+  const openMealDetail = (meal: MealLog) => {
+    setSelectedMeal(meal);
+    setIsEditingMeal(false);
+    setIsSavingMeal(false);
+    setMealEditError("");
+    setMealEditForm(buildEditForm(meal));
+  };
+
+  const closeMealDetail = () => {
+    setSelectedMeal(null);
+    setIsEditingMeal(false);
+    setIsSavingMeal(false);
+    setMealEditError("");
+    setMealEditForm(null);
+  };
+
+  const updateMealItemField = (index: number, field: keyof FoodItem, value: string) => {
+    setMealEditForm((prev) => {
+      if (!prev) return prev;
+      const items = [...prev.items];
+      const target = { ...items[index] };
+      if (field === "kcal") {
+        target.kcal = Number(value) || 0;
+      } else {
+        target[field] = value as never;
+      }
+      items[index] = target;
+      return { ...prev, items };
+    });
+  };
+
+  const addMealItem = () => {
+    setMealEditForm((prev) => prev ? {
+      ...prev,
+      items: [...prev.items, { name: "", qty: "", kcal: 0, macros: { carbs: 0, protein: 0, fat: 0 } }],
+    } : prev);
+  };
+
+  const removeMealItem = (index: number) => {
+    setMealEditForm((prev) => prev ? {
+      ...prev,
+      items: prev.items.filter((_, itemIndex) => itemIndex !== index),
+    } : prev);
+  };
+
+  const handleSaveMeal = async () => {
+    if (!selectedMeal || !mealEditForm || isDemoMode) return;
+
+    const sanitizedItems = mealEditForm.items
+      .map((item) => ({
+        name: item.name.trim(),
+        qty: item.qty.trim() || "1 serving",
+        kcal: Number(item.kcal) || 0,
+        macros: {
+          carbs: item.macros?.carbs || 0,
+          protein: item.macros?.protein || 0,
+          fat: item.macros?.fat || 0,
+        },
+      }))
+      .filter((item) => item.name);
+
+    if (!sanitizedItems.length) {
+      setMealEditError("음식 항목을 1개 이상 입력해 주세요.");
+      return;
+    }
+
+    const payload = {
+      raw_text: mealEditForm.raw_text.trim() || sanitizedItems.map((item) => item.name).join(", "),
+      meal_type: normalizeMealType(mealEditForm.meal_type.trim()),
+      eaten_at: new Date(mealEditForm.eaten_at).toISOString(),
+      items: sanitizedItems,
+      total_kcal: Number(mealEditForm.total_kcal) || 0,
+      macros: {
+        carbs: Number(mealEditForm.carbs) || 0,
+        protein: Number(mealEditForm.protein) || 0,
+        fat: Number(mealEditForm.fat) || 0,
+      },
+      ai_summary: mealEditForm.ai_summary.trim(),
+      confidence: 1,
+    };
+
+    try {
+      setIsSavingMeal(true);
+      setMealEditError("");
+      const res = await fetch(`${API_BASE_URL}/v1/meals/${selectedMeal.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(errorText || `Failed to update meal (${res.status})`);
+      }
+
+      const updatedMeal: MealLog = await res.json();
+      setMeals((prev) => prev.map((meal) => meal.id === updatedMeal.id ? updatedMeal : meal));
+      setSelectedMeal(updatedMeal);
+      setMealEditForm(buildEditForm(updatedMeal));
+      setIsEditingMeal(false);
+    } catch (error) {
+      console.error("Update failed", error);
+      setMealEditError(error instanceof Error ? error.message : "수정 내용을 저장하지 못했습니다.");
+    } finally {
+      setIsSavingMeal(false);
     }
   };
 
@@ -296,19 +476,19 @@ export default function Home() {
                   const dayMeals = meals.filter(m => isSameDay(parseISO(m.eaten_at), date));
                   const hasLog = dayMeals.length > 0;
                   const dayKcal = dayMeals.reduce((acc, curr) => acc + (curr.total_kcal || 0), 0);
+                  const achievementRate = dailyGoalKcal > 0 ? dayKcal / dailyGoalKcal : 0;
 
                   const isToday = isSameDay(date, new Date());
                   const isSelected = isSameDay(date, currentDate);
 
-                  // Determine intensity
+                  // Determine intensity by goal achievement rate.
                   let intensityClass = 'border-2 border-dashed border-gray-200 text-gray-300 group-hover:border-gray-400';
                   if (hasLog) {
-                    // Base style for logged days
-                    const base = "text-white shadow-[inset_0_0_4px_rgba(0,0,0,0.2)] transition-all";
-                    if (dayKcal >= 2000) intensityClass = `bg-slate-900 ${base}`;
-                    else if (dayKcal >= 1200) intensityClass = `bg-slate-800/90 ${base}`;
-                    else if (dayKcal >= 600) intensityClass = `bg-slate-800/70 ${base}`;
-                    else intensityClass = `bg-slate-800/40 ${base}`;
+                    const base = "shadow-[inset_0_0_4px_rgba(0,0,0,0.08)] transition-all";
+                    if (achievementRate >= 1) intensityClass = `bg-zinc-800 text-white shadow-[inset_0_0_6px_rgba(0,0,0,0.18)] transition-all`;
+                    else if (achievementRate >= 0.75) intensityClass = `bg-zinc-600 text-white ${base}`;
+                    else if (achievementRate >= 0.5) intensityClass = `bg-zinc-400 text-black ${base}`;
+                    else intensityClass = `bg-zinc-200 text-black ${base}`;
                   }
 
                   calendarDays.push(
@@ -372,11 +552,11 @@ export default function Home() {
                 <div className="text-center py-8 text-black/20 text-xs animate-pulse">Printing...</div>
               ) : filteredData.list.length === 0 ? (
                 <div className="text-center py-8 text-black/20 text-xs italic">
-                  ( No orders yet )
+                  ( 아직 기록된 식사가 없어요 )
                 </div>
               ) : (
                 (filteredData.list as MealLog[]).map((meal) => (
-                  <div key={meal.id} className="group cursor-pointer select-none" onClick={() => setSelectedMeal(meal)}>
+                  <div key={meal.id} className="group cursor-pointer select-none" onClick={() => openMealDetail(meal)}>
                     <div className="flex justify-between items-start">
                       <div className="flex gap-2 items-baseline">
                         <div className="flex flex-col">
@@ -384,7 +564,7 @@ export default function Home() {
                             {(meal.items_json && meal.items_json[0]) ? meal.items_json[0].name : (meal.raw_text || 'Meal Log')}
                           </span>
                           <span className="text-[10px] text-black/40 font-mono tracking-tighter">
-                            <span className="font-bold mr-1">[{meal.meal_type || 'MEAL'}]</span>
+                            <span className="font-bold mr-1">[{normalizeMealType(meal.meal_type)}]</span>
                             {format(parseISO(meal.eaten_at), 'aa h:mm')}
                             {meal.items_json && meal.items_json.length > 1 && ` (+${meal.items_json.length - 1})`}
                           </span>
@@ -432,21 +612,25 @@ export default function Home() {
             </div>
 
             <div className="flex justify-between text-[10px] text-black/50 mt-1 uppercase tracking-widest border-b border-dashed border-black/20 pb-2 mb-2">
-              <span>Daily Goal</span>
-              <span>2,000</span>
+              <span>오늘 목표</span>
+              <span>{dailyGoalKcal.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between text-[10px] text-black/50 mb-2 border-b border-dashed border-black/20 pb-2">
+              <span>달성률</span>
+              <span>{goalProgress}%</span>
             </div>
 
             <div className="space-y-1 text-xs font-mono">
               <div className="flex justify-between items-center">
-                <span className="text-[10px] text-black/50 uppercase">Carbs</span>
+                <span className="text-[10px] text-black/50">탄수화물</span>
                 <span className="font-bold">{filteredData.totalCarbs}g</span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-[10px] text-black/50 uppercase">Protein</span>
+                <span className="text-[10px] text-black/50">단백질</span>
                 <span className="font-bold">{filteredData.totalProtein}g</span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-[10px] text-black/50 uppercase">Fat</span>
+                <span className="text-[10px] text-black/50">지방</span>
                 <span className="font-bold">{filteredData.totalFat}g</span>
               </div>
             </div>
@@ -495,59 +679,238 @@ export default function Home() {
       {/* Meal Detail Modal (Simple Receipt Overlay) */}
       {
         selectedMeal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={() => setSelectedMeal(null)}>
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={closeMealDetail}>
             <div className="bg-white w-full max-w-xs receipt-shadow relative" onClick={e => e.stopPropagation()}>
               <div className="receipt-zigzag-top" />
               <div className="p-6">
-                <h2 className="text-xl font-bold uppercase text-center mb-4 border-b-2 border-black pb-2">Detail</h2>
+                <div className="flex items-center justify-between gap-3 mb-4 border-b-2 border-black pb-2">
+                  <h2 className="text-xl font-bold uppercase">Detail</h2>
+                  {!isDemoMode && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsEditingMeal((prev) => !prev);
+                        setMealEditError("");
+                        setMealEditForm(buildEditForm(selectedMeal));
+                      }}
+                      className="text-[10px] font-bold uppercase text-blue-600 hover:underline"
+                    >
+                      {isEditingMeal ? "[CANCEL EDIT]" : "[EDIT]"}
+                    </button>
+                  )}
+                </div>
                 <div className="space-y-2 text-sm font-mono">
-                  <div className="flex justify-between">
+                  <div className="flex items-center justify-between gap-3">
                     <span className="text-black/50">Type</span>
-                    <span className="font-bold uppercase">{selectedMeal.meal_type}</span>
+                    {isEditingMeal && mealEditForm ? (
+                      <select
+                        value={mealEditForm.meal_type}
+                        onChange={(e) => setMealEditForm({ ...mealEditForm, meal_type: e.target.value })}
+                        className="w-36 border-b border-black/30 bg-transparent px-1 py-0.5 text-right font-bold"
+                      >
+                        {MEAL_TYPE_OPTIONS.map((option) => (
+                          <option key={option} value={option}>{option}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="font-bold">{normalizeMealType(selectedMeal.meal_type)}</span>
+                    )}
                   </div>
-                  <div className="flex justify-between">
+                  <div className="flex items-center justify-between gap-3">
                     <span className="text-black/50">Time</span>
-                    <span className="font-bold">{format(parseISO(selectedMeal.eaten_at), 'aa h:mm')}</span>
+                    {isEditingMeal && mealEditForm ? (
+                      <input
+                        type="datetime-local"
+                        value={mealEditForm.eaten_at}
+                        onChange={(e) => setMealEditForm({ ...mealEditForm, eaten_at: e.target.value })}
+                        className="w-44 border-b border-black/30 px-1 py-0.5 text-right"
+                      />
+                    ) : (
+                      <span className="font-bold">{format(parseISO(selectedMeal.eaten_at), 'aa h:mm')}</span>
+                    )}
                   </div>
                   <div className="border-b border-dashed border-black/20 my-2" />
                   <div className="space-y-1">
-                    {selectedMeal.items_json?.map((item, idx) => (
-                      <div key={idx} className="flex justify-between">
-                        <span>{item.name}</span>
-                        <span className="font-bold">{item.kcal}</span>
+                    {isEditingMeal && mealEditForm ? (
+                      <>
+                        {mealEditForm.items.map((item, idx) => (
+                          <div key={idx} className="border-b border-dashed border-black/10 pb-2 last:border-b-0">
+                            <div className="grid grid-cols-[1fr_auto] gap-2">
+                              <input
+                                value={item.name}
+                                onChange={(e) => updateMealItemField(idx, "name", e.target.value)}
+                                placeholder="음식명"
+                                className="border-b border-black/30 px-1 py-0.5"
+                              />
+                              <input
+                                type="number"
+                                min="0"
+                                value={item.kcal}
+                                onChange={(e) => updateMealItemField(idx, "kcal", e.target.value)}
+                                placeholder="kcal"
+                                className="w-20 border-b border-black/30 px-1 py-0.5 text-right font-bold"
+                              />
+                            </div>
+                            <div className="mt-2 grid grid-cols-[1fr_auto] gap-2">
+                              <input
+                                value={item.qty}
+                                onChange={(e) => updateMealItemField(idx, "qty", e.target.value)}
+                                placeholder="수량"
+                                className="border-b border-black/20 px-1 py-0.5 text-[12px]"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => removeMealItem(idx)}
+                                className="text-[10px] font-bold uppercase text-red-500 hover:underline"
+                              >
+                                [DEL]
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={addMealItem}
+                          className="text-[10px] font-bold uppercase text-blue-600 hover:underline"
+                        >
+                          [ADD ITEM]
+                        </button>
+                      </>
+                    ) : (
+                      selectedMeal.items_json?.map((item, idx) => (
+                        <div key={idx} className="flex justify-between">
+                          <span>{item.name}</span>
+                          <span className="font-bold">{item.kcal} kcal</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  {isEditingMeal && mealEditForm ? (
+                    <div className="border-t-2 border-black mt-4 pt-2 space-y-3">
+                      <div className="flex items-center justify-between text-lg font-bold">
+                        <span>Total</span>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            min="0"
+                            value={mealEditForm.total_kcal}
+                            onChange={(e) => setMealEditForm({ ...mealEditForm, total_kcal: e.target.value })}
+                            className="w-20 border-b border-black/30 px-1 py-0.5 text-right"
+                          />
+                          <span>kcal</span>
+                        </div>
                       </div>
-                    ))}
-                  </div>
-                  <div className="border-t-2 border-black mt-4 pt-2 flex justify-between text-lg font-bold">
-                    <span>Total</span>
-                    <span>{selectedMeal.total_kcal}</span>
-                  </div>
+                      <div className="grid grid-cols-3 gap-2 col-span-2">
+                        <label className="space-y-1">
+                          <span className="text-[10px] font-bold text-black/50">탄수화물</span>
+                          <input
+                            type="number"
+                            min="0"
+                            value={mealEditForm.carbs}
+                            onChange={(e) => setMealEditForm({ ...mealEditForm, carbs: e.target.value })}
+                            className="w-full border-b border-black/30 px-1 py-0.5"
+                          />
+                        </label>
+                        <label className="space-y-1">
+                          <span className="text-[10px] font-bold text-black/50">단백질</span>
+                          <input
+                            type="number"
+                            min="0"
+                            value={mealEditForm.protein}
+                            onChange={(e) => setMealEditForm({ ...mealEditForm, protein: e.target.value })}
+                            className="w-full border-b border-black/30 px-1 py-0.5"
+                          />
+                        </label>
+                        <label className="space-y-1">
+                          <span className="text-[10px] font-bold text-black/50">지방</span>
+                          <input
+                            type="number"
+                            min="0"
+                            value={mealEditForm.fat}
+                            onChange={(e) => setMealEditForm({ ...mealEditForm, fat: e.target.value })}
+                            className="w-full border-b border-black/30 px-1 py-0.5"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="border-t-2 border-black mt-4 pt-2 flex justify-between text-lg font-bold">
+                      <span>Total</span>
+                      <span>{selectedMeal.total_kcal} kcal</span>
+                    </div>
+                  )}
 
-                  {selectedMeal.macros && (
+                  {!isEditingMeal && selectedMeal.macros && (
                     <div className="grid grid-cols-3 gap-2 mt-2 pt-2 border-t border-dashed border-black/20 text-center">
                       <div className="flex flex-col">
-                        <span className="text-[10px] text-black/50 uppercase">Carbs</span>
+                        <span className="text-[10px] text-black/50">탄수화물</span>
                         <span className="font-bold">{selectedMeal.macros.carbs}g</span>
                       </div>
                       <div className="flex flex-col">
-                        <span className="text-[10px] text-black/50 uppercase">Protein</span>
+                        <span className="text-[10px] text-black/50">단백질</span>
                         <span className="font-bold">{selectedMeal.macros.protein}g</span>
                       </div>
                       <div className="flex flex-col">
-                        <span className="text-[10px] text-black/50 uppercase">Fat</span>
+                        <span className="text-[10px] text-black/50">지방</span>
                         <span className="font-bold">{selectedMeal.macros.fat}g</span>
                       </div>
                     </div>
                   )}
-                  {selectedMeal.ai_summary && (
-                    <p className="text-xs text-black/60 mt-4 pt-4 border-t border-dashed border-black/20 italic">
-                      &quot;{selectedMeal.ai_summary}&quot;
-                    </p>
+                  {isEditingMeal && mealEditForm ? (
+                    <label className="block mt-4 pt-4 border-t border-dashed border-black/20 space-y-1">
+                      <span className="text-[10px] font-bold uppercase text-black/50">Summary</span>
+                      <textarea
+                        value={mealEditForm.ai_summary}
+                        onChange={(e) => setMealEditForm({ ...mealEditForm, ai_summary: e.target.value })}
+                        className="w-full min-h-20 border border-black/20 px-2 py-2 text-sm"
+                      />
+                    </label>
+                  ) : (
+                    selectedMeal.ai_summary && (
+                      <p className="text-xs text-black/60 mt-4 pt-4 border-t border-dashed border-black/20 italic">
+                        &quot;{selectedMeal.ai_summary}&quot;
+                      </p>
+                    )
+                  )}
+                  {isEditingMeal && mealEditForm && (
+                    <label className="block mt-2 space-y-1">
+                      <span className="text-[10px] font-bold uppercase text-black/50">Raw Text</span>
+                      <textarea
+                        value={mealEditForm.raw_text}
+                        onChange={(e) => setMealEditForm({ ...mealEditForm, raw_text: e.target.value })}
+                        className="w-full min-h-16 border border-black/20 px-2 py-2 text-sm"
+                      />
+                    </label>
+                  )}
+                  {mealEditError && (
+                    <p className="text-[11px] text-red-600 pt-2">{mealEditError}</p>
                   )}
                 </div>
-                <button onClick={() => setSelectedMeal(null)} className="w-full mt-6 bg-black text-white py-2 text-xs font-bold uppercase hover:bg-gray-800">
-                  Close Ticket
-                </button>
+                {isEditingMeal ? (
+                  <div className="grid grid-cols-2 gap-2 mt-6">
+                    <button
+                      onClick={() => {
+                        setIsEditingMeal(false);
+                        setMealEditError("");
+                        setMealEditForm(buildEditForm(selectedMeal));
+                      }}
+                      className="w-full border border-black py-2 text-xs font-bold uppercase hover:bg-gray-100"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSaveMeal}
+                      disabled={isSavingMeal}
+                      className="w-full bg-blue-600 text-white py-2 text-xs font-bold uppercase hover:bg-blue-700 disabled:opacity-60"
+                    >
+                      {isSavingMeal ? "Saving..." : "Save Edit"}
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={closeMealDetail} className="w-full mt-6 bg-black text-white py-2 text-xs font-bold uppercase hover:bg-gray-800">
+                    Close Ticket
+                  </button>
+                )}
               </div>
               <div className="receipt-zigzag-bottom" />
             </div>

@@ -10,6 +10,7 @@ export default function ProfilePage() {
     const [nickname, setNickname] = useState("");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+    const [dailyGoalKcal, setDailyGoalKcal] = useState("2000");
     const [message, setMessage] = useState("");
     const router = useRouter();
 
@@ -30,6 +31,7 @@ export default function ProfilePage() {
             .then((data) => {
                 setEmail(data.email);
                 setNickname(data.nickname || "");
+                setDailyGoalKcal(String(data.daily_goal_kcal ?? 2000));
             })
             .catch(() => {
                 removeToken();
@@ -44,6 +46,7 @@ export default function ProfilePage() {
         const body: any = {};
         if (nickname) body.nickname = nickname;
         if (password) body.password = password;
+        body.daily_goal_kcal = Number(dailyGoalKcal) || 2000;
 
         try {
             const res = await fetch(`${API_BASE_URL}/v1/users/me`, {
@@ -55,11 +58,11 @@ export default function ProfilePage() {
                 body: JSON.stringify(body),
             });
 
-            if (!res.ok) throw new Error("Failed to update profile");
-            setMessage("Profile updated successfully");
+            if (!res.ok) throw new Error("프로필 수정에 실패했습니다.");
+            setMessage("프로필이 수정되었습니다.");
             setPassword(""); // clear password field
         } catch (err: any) {
-            setMessage("Error: " + err.message);
+            setMessage(err.message || "오류가 발생했습니다.");
         }
     };
 
@@ -77,7 +80,7 @@ export default function ProfilePage() {
                     <div className="border-b-2 border-dashed border-black/20 pb-6 mb-8">
                         <div className="flex items-center justify-between mb-2">
                             <Link href="/" className="text-xs font-bold uppercase hover:bg-black/5 p-2 -ml-2 rounded">
-                                &lt; Back
+                                &lt; 홈
                             </Link>
                             <div className="w-8" />
                         </div>
@@ -86,7 +89,7 @@ export default function ProfilePage() {
                                 <img src="/logo.png" alt="BITELOG" className="h-[46px] object-contain mix-blend-multiply" style={{ imageRendering: "pixelated" }} />
                             </div>
                             <div className="text-[10px] font-bold text-black/60 uppercase tracking-widest">
-                                Member Info
+                                회원 정보
                             </div>
                         </div>
                     </div>
@@ -99,7 +102,7 @@ export default function ProfilePage() {
                         )}
 
                         <div className="space-y-1">
-                            <label className="text-[10px] uppercase font-bold text-black/50 tracking-widest block">Email</label>
+                            <label className="text-[10px] font-bold text-black/50 tracking-widest block">이메일</label>
                             <input
                                 type="email"
                                 value={email}
@@ -109,7 +112,7 @@ export default function ProfilePage() {
                         </div>
 
                         <div className="space-y-1">
-                            <label className="text-[10px] uppercase font-bold text-black/50 tracking-widest block">Update Nickname</label>
+                            <label className="text-[10px] font-bold text-black/50 tracking-widest block">닉네임 수정</label>
                             <input
                                 type="text"
                                 value={nickname}
@@ -119,12 +122,24 @@ export default function ProfilePage() {
                         </div>
 
                         <div className="space-y-1">
-                            <label className="text-[10px] uppercase font-bold text-black/50 tracking-widest block">Update Password</label>
+                            <label className="text-[10px] font-bold text-black/50 tracking-widest block">오늘 목표</label>
+                            <input
+                                type="number"
+                                value={dailyGoalKcal}
+                                onChange={(e) => setDailyGoalKcal(e.target.value)}
+                                className="w-full border-2 border-black p-2 font-mono text-sm focus:outline-none focus:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-shadow"
+                                min={0}
+                                step={50}
+                            />
+                        </div>
+
+                        <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-black/50 tracking-widest block">비밀번호 수정</label>
                             <input
                                 type="password"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
-                                placeholder="Leave blank to keep unchanged"
+                                placeholder="변경하지 않으려면 비워두세요"
                                 className="w-full border-2 border-black p-2 font-mono text-sm focus:outline-none focus:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-shadow placeholder:text-black/30"
                                 minLength={6}
                             />
@@ -134,16 +149,16 @@ export default function ProfilePage() {
                             type="submit"
                             className="w-full bg-white text-black font-bold uppercase tracking-widest py-3 mt-6 hover:bg-black/5 border-2 border-black transition-colors"
                         >
-                            Update Profile
+                            프로필 수정
                         </button>
                     </form>
 
                     <div className="mt-8 pt-6 border-t border-dashed border-black/20 space-y-4 text-center">
                         <button
                             onClick={handleLogout}
-                            className="w-full bg-black text-white font-bold uppercase tracking-widest py-3 hover:bg-gray-800 border-2 border-black transition-colors"
+                            className="w-full bg-white text-black/55 font-medium tracking-widest py-2 text-sm hover:bg-black/5 border border-black/25 transition-colors"
                         >
-                            Logout
+                            로그아웃
                         </button>
                     </div>
                 </div>

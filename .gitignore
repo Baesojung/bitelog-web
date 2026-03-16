@@ -42,3 +42,7 @@ next-env.d.ts
 
 # Local virtual env
 .venv/
+
+# Local runtime files
+.run/
+keep3000.sh
